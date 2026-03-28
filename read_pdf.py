@@ -1,26 +1,35 @@
+import argparse
+from pathlib import Path
+
 import PyPDF2
 
-# Function to read the PDF file
-def read_pdf(file_path):
-    try:
-        # Open the PDF file in read-binary mode
-        with open(file_path, 'rb') as pdf_file:
-            # Create a PDF Reader object
-            reader = PyPDF2.PdfReader(pdf_file)
 
-            # Extract text from each page
+def read_pdf(file_path: Path) -> str:
+    try:
+        with open(file_path, "rb") as pdf_file:
+            reader = PyPDF2.PdfReader(pdf_file)
             text = ""
             for page in reader.pages:
-                text += page.extract_text()
-
+                text += page.extract_text() or ""
             return text
     except Exception as e:
         return f"An error occurred: {e}"
 
-# Path to the PDF file
-pdf_path = rf"D:\Masters_Sub\CMPE_257\project\CMPE-257_Machine Learning_Project_Proposal.pdf"
+
+def main() -> None:
+    repo_root = Path(__file__).resolve().parent
+    parser = argparse.ArgumentParser(description="Extract text from a PDF file.")
+    parser.add_argument(
+        "pdf",
+        nargs="?",
+        type=Path,
+        default=repo_root / "documents" / "project_proposal.pdf",
+        help="Path to PDF (default: documents/project_proposal.pdf under repo root)",
+    )
+    args = parser.parse_args()
+    pdf_path = args.pdf.resolve()
+    print(read_pdf(pdf_path))
 
 
-# Read and print the content of the PDF file
-pdf_text = read_pdf(pdf_path)
-print(pdf_text)
+if __name__ == "__main__":
+    main()

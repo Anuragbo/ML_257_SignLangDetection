@@ -10,18 +10,21 @@ Models:
   4. CNN (on raw 64x64 images)  — uses PyTorch
 
 Usage:
+    # Defaults resolve to part1_letter_classifier/{data,models} (see --help).
+
     # Landmark-based models (SVM, RF, MLP):
-    python train.py --mode landmarks --data_dir ../data
+    python train.py --mode landmarks
 
     # CNN on raw images:
-    python train.py --mode cnn --image_dir ../data/asl_dataset
+    python train.py --mode cnn
 
     # Train all:
-    python train.py --mode all --data_dir ../data --image_dir ../data/asl_dataset
+    python train.py --mode all
 """
 
 import os
 import argparse
+from pathlib import Path
 import numpy as np
 import joblib
 
@@ -46,6 +49,8 @@ torch.manual_seed(SEED)
 
 IMG_SIZE = 64
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+_PART1_ROOT = Path(__file__).resolve().parent.parent
 
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
@@ -219,9 +224,9 @@ def predict_cnn(model, X, batch_size=64):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["landmarks", "cnn", "all"], default="all")
-    parser.add_argument("--data_dir", default="../data")
-    parser.add_argument("--image_dir", default="../data/asl_dataset")
-    parser.add_argument("--models_dir", default="../models")
+    parser.add_argument("--data_dir", default=str(_PART1_ROOT / "data"))
+    parser.add_argument("--image_dir", default=str(_PART1_ROOT / "data" / "asl_dataset"))
+    parser.add_argument("--models_dir", default=str(_PART1_ROOT / "models"))
     args = parser.parse_args()
 
     os.makedirs(args.models_dir, exist_ok=True)

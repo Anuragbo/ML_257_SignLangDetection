@@ -7,11 +7,13 @@ Loads saved models and the held-out test set, then produces:
   - Side-by-side model comparison bar chart (saved as PNG)
 
 Usage:
-    python evaluate.py --data_dir ../data --models_dir ../models --output_dir ../results
+    python evaluate.py
+    # Defaults: data/models/results under part1_letter_classifier/
 """
 
 import os
 import argparse
+from pathlib import Path
 import numpy as np
 import joblib
 import matplotlib.pyplot as plt
@@ -23,6 +25,8 @@ from sklearn.metrics import (
 )
 
 import torch
+
+_PART1_ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_label_map(data_dir):
@@ -96,9 +100,9 @@ def plot_comparison(results, output_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", default="../data")
-    parser.add_argument("--models_dir", default="../models")
-    parser.add_argument("--output_dir", default="../results")
+    parser.add_argument("--data_dir", default=str(_PART1_ROOT / "data"))
+    parser.add_argument("--models_dir", default=str(_PART1_ROOT / "models"))
+    parser.add_argument("--output_dir", default=str(_PART1_ROOT / "results"))
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)

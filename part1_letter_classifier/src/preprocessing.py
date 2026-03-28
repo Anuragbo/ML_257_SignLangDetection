@@ -5,16 +5,18 @@ Extracts and normalizes MediaPipe hand landmarks from the ASL static image datas
 Uses the new MediaPipe Tasks API (0.10+).
 
 Usage:
-    python preprocessing.py --data_dir ../data/asl_dataset --output_dir ../data
+    python preprocessing.py
+    # Defaults: data from part1_letter_classifier/data/asl_dataset, output to .../data
 
-Output:
-    ../data/X.npy       - shape (n_samples, 63)  float32 landmark features
-    ../data/y.npy       - shape (n_samples,)     int   label indices
-    ../data/label_map.npy - dict mapping index -> letter/digit
+Output (under --output_dir, default part1_letter_classifier/data):
+    X.npy         - shape (n_samples, 63)  float32 landmark features
+    y.npy         - shape (n_samples,)     int   label indices
+    label_map.npy - dict mapping index -> letter/digit
 """
 
 import os
 import argparse
+from pathlib import Path
 import urllib.request
 import numpy as np
 import cv2
@@ -27,7 +29,9 @@ from mediapipe.tasks.python import vision as mp_vision
 # ── Model download ────────────────────────────────────────────────────────────
 MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/"
               "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task")
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
+_MODEL_DIR = Path(__file__).resolve().parent
+_PART1_ROOT = _MODEL_DIR.parent
+MODEL_PATH = str(_MODEL_DIR / "hand_landmarker.task")
 
 
 def ensure_model():
@@ -40,7 +44,10 @@ def ensure_model():
 # ── Landmark extraction ───────────────────────────────────────────────────────
 
 def make_detector():
-    base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
+    base_options = mp_python.BaseOptions(
+        model_asset_path=MODEL_PATH,
+        delegate=mp_python.BaseOptions.Delegate.CPU,
+    )
     options = mp_vision.HandLandmarkerOptions(
         base_options=base_options,
         num_hands=1,
@@ -147,9 +154,9 @@ def build_dataset(data_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir",   default="../data/asl_dataset",
+    parser.add_argument("--data_dir", default=str(_PART1_ROOT / "data" / "asl_dataset"),
                         help="Root folder with one subfolder per letter/digit")
-    parser.add_argument("--output_dir", default="../data",
+    parser.add_argument("--output_dir", default=str(_PART1_ROOT / "data"),
                         help="Where to save X.npy, y.npy, label_map.npy")
     args = parser.parse_args()
 

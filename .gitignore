@@ -14,3 +14,6 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Dataset download staging
+**/_kaggle_staging/
