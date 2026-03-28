@@ -100,24 +100,26 @@ The Dockerfile uses the full **`python:3.11-bookworm`** image plus Mesa/GLES pac
 Mount your Kaggle API folder so automatic dataset download works (omit the `-v` line if you already copied `asl_dataset` into `part1_letter_classifier/data/`):
 
 ```bash
-docker compose run --rm -v "${HOME}/.kaggle:/root/.kaggle:ro" signlang python /app/run_pipeline.py
+docker compose --profile pipeline run --rm -v "${HOME}/.kaggle:/root/.kaggle:ro" signlang python /app/run_pipeline.py
 ```
 
 On **Windows PowerShell** (path to your user profile):
 
 ```powershell
-docker compose run --rm -v "${env:USERPROFILE}\.kaggle:/root/.kaggle:ro" signlang python /app/run_pipeline.py
+docker compose --profile pipeline run --rm -v "${env:USERPROFILE}\.kaggle:/root/.kaggle:ro" signlang python /app/run_pipeline.py
 ```
 
 Or run each step yourself:
 
 ```bash
-docker compose run --rm signlang python /app/part1_letter_classifier/src/preprocessing.py
-docker compose run --rm signlang python /app/part1_letter_classifier/src/train.py --mode all
-docker compose run --rm signlang python /app/part1_letter_classifier/src/evaluate.py
+docker compose --profile pipeline run --rm signlang python /app/part1_letter_classifier/src/preprocessing.py
+docker compose --profile pipeline run --rm signlang python /app/part1_letter_classifier/src/train.py --mode all
+docker compose --profile pipeline run --rm signlang python /app/part1_letter_classifier/src/evaluate.py
 ```
 
-`docker-compose.yml` mounts `part1_letter_classifier/data`, `models`, and `results` into the container, so outputs stay on your computer under those folders.
+`docker-compose.yml` mounts `part1_letter_classifier/data`, `models`, and `results` into the container, so outputs stay on your computer under those folders. The **`signlang`** service uses **`--profile pipeline`** so a plain `docker compose up` does not start it by default.
+
+The **`signlang-ui`** service runs the **Web UI** (Flask: upload + live camera in the browser) on port **5000** — see **Web UI (Docker)** below (`docker compose up signlang-ui`).
 
 Training can take a long time (especially the CNN). The image uses **CPU** PyTorch to avoid huge CUDA downloads.
 
@@ -243,11 +245,87 @@ python3 demo.py
 
 **Controls:** `q` quit; `1` SVM, `2` Random Forest, `3` MLP.
 
-This is easiest **outside** Docker because the container does not see your webcam or screen unless you add extra configuration.
+### Using Docker
+
+- **Windows / macOS (Docker Desktop):** Passing the **webcam** and a **GUI window** (`cv2.imshow`) into a Linux container is **not practical** for most setups. Use **`docker compose up signlang-ui`** and use **Live camera** or upload stills in the browser, or run **`demo.py` with local Python** (venv) as above.
+- **Linux (same machine display):** You can try the **`signlang-demo`** service (needs `/dev/video0`, `DISPLAY`, and the X11 socket so the window can open):
+
+```bash
+docker compose --profile demo run --rm -it \
+  --device /dev/video0 \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  signlang-demo
+```
+
+Optional: `python /app/part1_letter_classifier/src/demo.py --model svm` by overriding `command` in a one-off run, or run `bash` first and invoke `demo.py` manually.
 
 ---
 
-## 7. Extract text from a PDF
+## 7. Web UI — upload or live camera (letter prediction)
+
+Small Flask app under **`part1_letter_classifier/ui/`** — upload a still photo or use **Live camera** (browser `getUserMedia`) so frames are sent to the server as JPEGs; the trained **SVM / RF / MLP** models predict the letter (same pipeline as `demo.py`, but the camera runs in the browser, not in the container).
+
+**Live camera + Docker:** The webcam is used by your **browser** on the host; only image bytes are posted to the Flask app. That works with **`docker compose up signlang-ui`** on Windows without passing `/dev/video0` into the container. Use **http://127.0.0.1** or **http://localhost** so the page is treated as a secure context for camera access.
+
+**Layout**
+
+```text
+part1_letter_classifier/ui/
+  app.py
+  templates/index.html
+  static/style.css
+```
+
+**Run** (from the **repository root**, after `pip install -r requirements.txt` and training so `models/*.pkl` and `data/label_map.npy` exist):
+
+```bash
+python part1_letter_classifier/ui/app.py
+```
+
+Open **http://127.0.0.1:5000** in your browser. Optional: `set PORT=8080` (Windows) or `export PORT=8080` to change the port.
+
+### Run the Web UI in Docker
+
+Uses the same **`ml257-signlang`** image as the training pipeline. Mounts **`data/`** (for `label_map.npy`) and **`models/`** (for `.pkl` files) from your repo.
+
+**Build** (if you have not already):
+
+```bash
+docker build -t ml257-signlang:latest .
+```
+
+**Start the UI** (foreground; stop with Ctrl+C):
+
+```bash
+docker compose up signlang-ui
+```
+
+Detached (runs in the background):
+
+```bash
+docker compose up -d signlang-ui
+```
+
+Then open **http://127.0.0.1:5000** on the machine running Docker (use **http://localhost:5000** if you prefer).
+
+**Run on another host port** (e.g. 8080):
+
+```bash
+UI_PORT=8080 docker compose up signlang-ui
+```
+
+**Windows PowerShell:**
+
+```powershell
+$env:UI_PORT=8080; docker compose up signlang-ui
+```
+
+The app listens on **`0.0.0.0`** inside the container so port mapping works; locally you still use `127.0.0.1` in the browser.
+
+---
+
+## 8. Extract text from a PDF
 
 Default: `documents/project_proposal.pdf`. Requires local Python (or run a one-off container with the same image if you prefer).
 
@@ -258,7 +336,7 @@ python read_pdf.py "path\to\your\file.pdf"
 
 ---
 
-## 8. Jupyter notebooks
+## 9. Jupyter notebooks
 
 Open `part1_letter_classifier/notebooks/` in Jupyter on the host. The first cell assumes the notebook’s working directory is the `notebooks` folder.
 

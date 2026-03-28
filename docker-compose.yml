@@ -1,5 +1,7 @@
 services:
+  # Training / preprocessing — not started by plain `docker compose up` (use --profile pipeline).
   signlang:
+    profiles: ["pipeline"]
     build: .
     image: ml257-signlang:latest
     working_dir: /app
@@ -9,8 +11,37 @@ services:
       - ./part1_letter_classifier/data:/app/part1_letter_classifier/data
       - ./part1_letter_classifier/models:/app/part1_letter_classifier/models
       - ./part1_letter_classifier/results:/app/part1_letter_classifier/results
-    # Examples (uncomment one):
-    # command: python /app/part1_letter_classifier/src/preprocessing.py
-    # command: python /app/part1_letter_classifier/src/train.py --mode all
-    # command: python /app/part1_letter_classifier/src/evaluate.py
+    # Override when running, e.g.:
+    # docker compose --profile pipeline run --rm signlang python /app/run_pipeline.py
     command: python /app/part1_letter_classifier/src/train.py --help
+
+  # Image upload UI (Flask). Same image; needs trained models + label_map on the host mounts.
+  signlang-ui:
+    build: .
+    image: ml257-signlang:latest
+    working_dir: /app
+    ports:
+      - "${UI_PORT:-5000}:5000"
+    environment:
+      PYTHONPATH: /app/part1_letter_classifier/src
+      HOST: "0.0.0.0"
+      PORT: "5000"
+    volumes:
+      - ./part1_letter_classifier/data:/app/part1_letter_classifier/data
+      - ./part1_letter_classifier/models:/app/part1_letter_classifier/models
+    command: python /app/part1_letter_classifier/ui/app.py
+
+  # Webcam OpenCV demo (demo.py). Profile "demo". See README: needs Linux + /dev/video0 + GUI (X11) for cv2.imshow.
+  signlang-demo:
+    profiles: ["demo"]
+    build: .
+    image: ml257-signlang:latest
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    environment:
+      PYTHONPATH: /app/part1_letter_classifier/src
+    volumes:
+      - ./part1_letter_classifier/data:/app/part1_letter_classifier/data
+      - ./part1_letter_classifier/models:/app/part1_letter_classifier/models
+    command: python /app/part1_letter_classifier/src/demo.py
