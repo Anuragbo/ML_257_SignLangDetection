@@ -1,0 +1,10 @@
+.git
+**/__pycache__
+**/*.pyc
+**/.ipynb_checkpoints
+**/venv
+**/.venv
+.env
+part1_letter_classifier/data/**
+part1_letter_classifier/models/**
+part1_letter_classifier/results/**

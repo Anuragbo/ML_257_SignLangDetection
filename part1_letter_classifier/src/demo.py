@@ -22,6 +22,7 @@ Controls:
 
 import os
 import sys
+from pathlib import Path
 import time
 import argparse
 from collections import deque, Counter
@@ -38,8 +39,10 @@ from mediapipe.tasks.python import vision as mp_vision
 from preprocessing import extract_landmarks, ensure_model, MODEL_PATH
 
 # ── Constants ────────────────────────────────────────────────────────────────
-MODELS_DIR  = os.path.join(os.path.dirname(__file__), "..", "models")
-DATA_DIR    = os.path.join(os.path.dirname(__file__), "..", "data")
+_SRC_DIR = Path(__file__).resolve().parent
+_PART1_ROOT = _SRC_DIR.parent
+MODELS_DIR = str(_PART1_ROOT / "models")
+DATA_DIR = str(_PART1_ROOT / "data")
 BUFFER_SIZE = 7          # rolling window for prediction stabilization
 COLORS = {
     "green":  (0, 200, 0),
@@ -57,7 +60,10 @@ COLORS = {
 def make_video_detector():
     """Create a HandLandmarker configured for single-image mode (works frame-by-frame)."""
     ensure_model()
-    base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
+    base_options = mp_python.BaseOptions(
+        model_asset_path=MODEL_PATH,
+        delegate=mp_python.BaseOptions.Delegate.CPU,
+    )
     options = mp_vision.HandLandmarkerOptions(
         base_options=base_options,
         num_hands=1,

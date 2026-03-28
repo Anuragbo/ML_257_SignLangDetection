@@ -1,0 +1,16 @@
+services:
+  signlang:
+    build: .
+    image: ml257-signlang:latest
+    working_dir: /app
+    environment:
+      PYTHONPATH: /app/part1_letter_classifier/src
+    volumes:
+      - ./part1_letter_classifier/data:/app/part1_letter_classifier/data
+      - ./part1_letter_classifier/models:/app/part1_letter_classifier/models
+      - ./part1_letter_classifier/results:/app/part1_letter_classifier/results
+    # Examples (uncomment one):
+    # command: python /app/part1_letter_classifier/src/preprocessing.py
+    # command: python /app/part1_letter_classifier/src/train.py --mode all
+    # command: python /app/part1_letter_classifier/src/evaluate.py
+    command: python /app/part1_letter_classifier/src/train.py --help
