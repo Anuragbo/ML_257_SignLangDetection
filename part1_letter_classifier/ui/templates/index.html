@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ASL letter — image or live video</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <h1>ASL letter recognition</h1>
+      <p class="sub">Upload a still photo <strong>or</strong> use <strong>live camera</strong> (browser captures video; frames are sent to the server — works with Docker). Same MediaPipe + sklearn models as <code>demo.py</code>.</p>
+    </header>
+
+    <main class="card">
+      <form id="form" class="form">
+        <label class="field">
+          <span class="label">Classifier</span>
+          <select name="model" id="model">
+            <option value="mlp" selected>MLP</option>
+            <option value="svm">SVM</option>
+            <option value="rf">Random Forest</option>
+          </select>
+        </label>
+
+        <div class="live-block">
+          <span class="label">Live video</span>
+          <div class="video-wrap">
+            <video id="liveVideo" playsinline muted autoplay></video>
+          </div>
+          <p class="live-hint">Allow camera access. Preview is local; predictions use the selected model (~3 frames/sec).</p>
+          <div class="live-actions">
+            <button type="button" class="btn btn-live" id="btnLiveStart">Start camera</button>
+            <button type="button" class="btn btn-secondary" id="btnLiveStop" disabled>Stop</button>
+          </div>
+        </div>
+
+        <label class="field upload-zone" id="zone">
+          <input type="file" name="image" id="file" accept="image/*" hidden>
+          <span class="upload-hint" id="hint">Or click / drop a still image here</span>
+          <span class="file-name" id="fileName"></span>
+        </label>
+
+        <button type="submit" class="btn" id="submit">Predict from image</button>
+      </form>
+
+      <div id="status" class="status" aria-live="polite"></div>
+
+      <section id="result" class="result hidden">
+        <div class="letter-box" id="letterBox">—</div>
+        <p class="conf" id="confidence"></p>
+        <h3 class="list-title">Top predictions</h3>
+        <ol id="topList" class="top-list"></ol>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Requires <code>part1_letter_classifier/data/label_map.npy</code> and trained <code>.pkl</code> models under <code>models/</code>.</p>
+    </footer>
+  </div>
+
+  <script>
+    const form = document.getElementById('form');
+    const fileInput = document.getElementById('file');
+    const zone = document.getElementById('zone');
+    const hint = document.getElementById('hint');
+    const fileName = document.getElementById('fileName');
+    const statusEl = document.getElementById('status');
+    const resultEl = document.getElementById('result');
+    const letterBox = document.getElementById('letterBox');
+    const confidenceEl = document.getElementById('confidence');
+    const topList = document.getElementById('topList');
+    const submitBtn = document.getElementById('submit');
+    const liveVideo = document.getElementById('liveVideo');
+    const btnLiveStart = document.getElementById('btnLiveStart');
+    const btnLiveStop = document.getElementById('btnLiveStop');
+    const snapCanvas = document.createElement('canvas');
+    let liveStream = null;
+    let liveTimer = null;
+    const LIVE_INTERVAL_MS = 350;
+
+    zone.addEventListener('click', () => fileInput.click());
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.classList.remove('drag');
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        updateFileName();
+      }
+    });
+    fileInput.addEventListener('change', updateFileName);
+
+    function updateFileName() {
+      const f = fileInput.files[0];
+      fileName.textContent = f ? f.name : '';
+      hint.style.display = f ? 'none' : 'inline';
+    }
+
+    function showStatus(msg, isError) {
+      statusEl.textContent = msg;
+      statusEl.className = 'status' + (isError ? ' error' : '');
+    }
+
+    function hideResult() {
+      resultEl.classList.add('hidden');
+    }
+
+    function applyPrediction(data) {
+      if (!data.ok) {
+        showStatus(data.error || 'Request failed', true);
+        return;
+      }
+      if (!data.hand_detected) {
+        showStatus(data.message || 'No hand detected.', false);
+        letterBox.textContent = '—';
+        confidenceEl.textContent = '';
+        topList.innerHTML = '';
+        resultEl.classList.remove('hidden');
+        return;
+      }
+      showStatus(liveTimer ? 'Live · hand detected' : 'Done.', false);
+      letterBox.textContent = (data.letter || '?').toUpperCase();
+      const c = data.confidence != null ? Math.round(data.confidence * 1000) / 10 : 0;
+      confidenceEl.textContent = 'Confidence: ' + c + '% · model: ' + (data.model || '');
+      topList.innerHTML = '';
+      (data.top_predictions || []).forEach((row) => {
+        const li = document.createElement('li');
+        const pct = Math.round(row.confidence * 1000) / 10;
+        li.textContent = row.letter + ' — ' + pct + '%';
+        topList.appendChild(li);
+      });
+      resultEl.classList.remove('hidden');
+    }
+
+    async function predictBlob(blob) {
+      const fd = new FormData();
+      fd.append('image', blob, 'frame.jpg');
+      fd.append('model', document.getElementById('model').value);
+      const res = await fetch('/api/predict', { method: 'POST', body: fd });
+      return res.json();
+    }
+
+    let liveRequestBusy = false;
+    async function tickLive() {
+      if (!liveStream || !liveVideo.videoWidth || liveRequestBusy) return;
+      liveRequestBusy = true;
+      try {
+        const w = liveVideo.videoWidth;
+        const h = liveVideo.videoHeight;
+        snapCanvas.width = w;
+        snapCanvas.height = h;
+        const ctx = snapCanvas.getContext('2d');
+        ctx.drawImage(liveVideo, 0, 0, w, h);
+        const blob = await new Promise((resolve) => snapCanvas.toBlob(resolve, 'image/jpeg', 0.88));
+        if (!blob) return;
+        const data = await predictBlob(blob);
+        applyPrediction(data);
+      } catch (err) {
+        showStatus('Live error: ' + err, true);
+      } finally {
+        liveRequestBusy = false;
+      }
+    }
+
+    btnLiveStart.addEventListener('click', async () => {
+      if (liveStream) return;
+      try {
+        liveStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        });
+        liveVideo.srcObject = liveStream;
+        await liveVideo.play();
+        btnLiveStart.disabled = true;
+        btnLiveStop.disabled = false;
+        showStatus('Live mode on — showing your camera…', false);
+        resultEl.classList.remove('hidden');
+        liveTimer = setInterval(tickLive, LIVE_INTERVAL_MS);
+      } catch (err) {
+        showStatus('Camera not available: ' + err.message, true);
+      }
+    });
+
+    btnLiveStop.addEventListener('click', () => {
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = null;
+      }
+      if (liveStream) {
+        liveStream.getTracks().forEach((t) => t.stop());
+        liveStream = null;
+      }
+      liveVideo.srcObject = null;
+      btnLiveStart.disabled = false;
+      btnLiveStop.disabled = true;
+      showStatus('Live mode off.', false);
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideResult();
+      const fd = new FormData(form);
+      if (!fileInput.files.length) {
+        showStatus('Choose an image first.', true);
+        return;
+      }
+      submitBtn.disabled = true;
+      showStatus('Running prediction…', false);
+      try {
+        const res = await fetch('/api/predict', { method: 'POST', body: fd });
+        const data = await res.json();
+        applyPrediction(data);
+      } catch (err) {
+        showStatus('Network error: ' + err, true);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

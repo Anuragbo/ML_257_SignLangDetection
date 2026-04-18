@@ -15,6 +15,9 @@ Thumbs.db
 # Jupyter
 .ipynb_checkpoints/
 
+# Dataset download staging
+**/_kaggle_staging/
+
 Findings.txt
 
 # Large binary data — too big for GitHub
