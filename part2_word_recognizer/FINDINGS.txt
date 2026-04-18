@@ -1,0 +1,336 @@
+============================================================
+  WLASL Word-Level ASL Recognition — Project Findings
+  CMPE 257 | Part 2
+============================================================
+
+------------------------------------------------------------
+STEP 1 — Dataset Download (download_dataset.py)
+------------------------------------------------------------
+WHAT WE DID:
+  - Parsed WLASL_v0.3.json and filtered to WLASL100 (top 100 glosses
+    by instance count, 2,038 total video records).
+  - Downloaded MP4s using 16 parallel threads (ThreadPoolExecutor),
+    10s timeout, 1 retry per URL.
+
+KEY FINDINGS:
+  - Download yield: 1,253 / 2,038 videos (61.5%)
+  - ~38.5% of URLs are dead (signingsavvy/aslpro CDNs taken down).
+    This is expected and documented in the WLASL paper.
+  - Sequential downloading would have taken ~15 hours.
+    Parallel (16 workers) completed in ~20 minutes.
+  - All 100 glosses had at least 1 successful download.
+
+OUTPUT FILES:
+  - data/videos/          ~1,253 MP4 files
+  - data/available_videos.json   (1,253 records, successful only)
+  - data/failed_downloads.txt    (failed video IDs)
+
+LESSONS:
+  - Always parallelize bulk downloads; sequential is impractical at scale.
+  - Keep timeout short (10s) with fewer retries — dead URLs waste time on retries.
+  - Save only successful records to available_videos.json to avoid
+    downstream errors in preprocessing.
+
+
+------------------------------------------------------------
+STEP 2 — EDA Phase A (eda_phase_a.py)
+------------------------------------------------------------
+WHAT WE DID:
+  - Analyzed the raw WLASL JSON and download results before preprocessing.
+  - Examined class balance, signer diversity, video durations, and
+    per-gloss download coverage.
+
+KEY FINDINGS:
+  Instance counts (WLASL100):
+    - Range: varies significantly across 100 glosses.
+    - Some glosses have far more instances (more signers/videos recorded).
+
+  Split distribution (full WLASL100):
+    - Train / Val / Test split is signer-independent (from WLASL paper).
+    - Signer-independent splits are harder but more realistic — the model
+      must generalize to unseen signers.
+
+  Signer diversity:
+    - Multiple signers per gloss, which helps generalization.
+    - Some glosses have only 1 unique signer — high overfitting risk for those.
+
+  Video duration:
+    - Most signs are 0.5–3 seconds long at 25 fps.
+    - High variance: some videos are much longer (context clips).
+    - Uniform frame sampling (30 frames) handles variable-length videos cleanly.
+
+  Download coverage:
+    - 5 glosses had 0 downloaded videos in an earlier check; after final
+      download run all 100 glosses had at least 1 video.
+    - Decision: keep all 100 glosses, re-index contiguously.
+
+OUTPUT FILES:
+  - results/eda_a2_instance_counts.png
+  - results/eda_a3_split_distribution.png
+  - results/eda_a4_signer_diversity.png
+  - results/eda_a5_duration_distribution.png
+  - results/eda_a6_download_coverage.png
+
+LESSONS:
+  - Signer-independent splits are the right evaluation protocol for ASL
+    recognition — signer-dependent splits inflate accuracy unrealistically.
+  - Low per-gloss coverage (some glosses have only 2-3 videos) means
+    the model must learn from very few examples per class.
+
+
+------------------------------------------------------------
+STEP 3 — Preprocessing (preprocessing.py)
+------------------------------------------------------------
+WHAT WE DID:
+  - Extracted MediaPipe Holistic landmarks from each video.
+  - Uniform-sampled 30 frames per video from the signed segment
+    (frame_start to frame_end from JSON metadata).
+  - Feature vector per frame: Left hand (63D) + Right hand (63D) + Pose (99D) = 225D.
+  - Normalized: hands → wrist to origin, scale by wrist-to-MCP9 distance.
+              pose → hip midpoint to origin, scale by torso height.
+  - Re-indexed class labels contiguously (0–99).
+
+KEY FINDINGS:
+  - Processed: 568 sequences  |  Skipped: 685
+  - Skipped videos: MP4 files that failed to open with OpenCV
+    (likely corrupted during download despite passing size check).
+  - Zero-detection frames: 131 / 17,040 (0.8%) — MediaPipe found
+    landmarks in 99.2% of all frames sampled.
+  - No sequence had more than 1 zero frame — very clean detection.
+  - Output shape: X.npy = (568, 30, 225) float32
+
+TECHNICAL PROBLEMS SOLVED:
+  1. Slow extraction (VIDEO mode, new detector per video):
+     - VIDEO mode re-initializes the segmentation smoother per video (~2-6s/video).
+     - Fix: switched to IMAGE mode with a single shared detector instance.
+     - IMAGE mode processes each frame independently (no temporal state).
+
+  2. MediaPipe crash when reusing detector across different-resolution videos:
+     Error: "SegmentationSmoothingCalculator: current_mat->rows == previous_mat->rows
+             (480 vs. 414)"
+     - Root cause: even in IMAGE mode, the segmentation smoother retains state
+       across frames and crashes when resolution changes between videos.
+     - Fix: resize every frame to (640, 480) before detection.
+       frame_bgr = cv2.resize(frame_bgr, (640, 480))
+
+  3. Label index gaps after dropping zero-coverage glosses:
+     - If some glosses had no videos, label indices would not be contiguous.
+     - Fix: re-index labels by sorting active glosses alphabetically and
+       assigning indices 0..N-1.
+
+OUTPUT FILES:
+  - data/sequences/X.npy          (568, 30, 225) float32
+  - data/sequences/y.npy          (568,) int32
+  - data/sequences/label_map.npy  {idx: word_str}
+  - data/sequences/splits.npy     {video_id: 'train'/'val'/'test'}
+  - data/sequences/video_ids.npy  list of video IDs
+
+LESSONS:
+  - Reuse a single MediaPipe detector in IMAGE mode across all videos
+    for best speed; VIDEO mode is intended for continuous streams only.
+  - Always normalize input resolution to avoid stateful calculator crashes.
+  - Frame sampling (uniform linspace) is simpler and more reliable than
+    trying to decode every frame, especially for variable-length videos.
+
+
+------------------------------------------------------------
+STEP 4 — EDA Phase B (eda_phase_b.py)
+------------------------------------------------------------
+WHAT WE DID:
+  - Analyzed the extracted X.npy / y.npy sequences.
+  - Examined class balance, split breakdown, zero-detection quality,
+    feature statistics, temporal dynamics, and hand usage.
+
+KEY FINDINGS:
+  Class balance:
+    - Min: 2 samples (birthday)   Max: 10 (computer)   Mean: 5.7
+    - Standard deviation: 1.5 — moderate imbalance
+    - 5 classes have only 2-3 samples:
+        birthday (2), but/clothes/table/tell (3 each)
+    - With so few samples per class, overfitting is a serious risk.
+      WeightedRandomSampler + augmentation are essential.
+
+  Split breakdown (extracted sequences):
+    - Train: 407  |  Val: 100  |  Test: 61
+    - Test set is small (61 samples, ~10 per class on average across 100 classes).
+      Top-5 accuracy is as important as top-1 for fair evaluation.
+
+  Zero-detection quality:
+    - Total zero frames: 131 / 17,040 (0.8%) — excellent
+    - 437 / 568 sequences (77%) have zero zero-frames (completely clean)
+    - No sequence has more than 1 zero frame
+    - MediaPipe landmark detection is highly reliable on this dataset
+
+  Feature statistics (non-zero frames):
+    - Left hand  (63D): mean=-0.133, std=0.439
+    - Right hand (63D): mean=-0.093, std=0.573
+    - Pose       (99D): mean=-0.345, std=0.822
+    - All centered near 0 — normalization is working correctly.
+    - Pose has higher variance, which makes sense (larger body movements).
+
+  Hand usage:
+    - Both hands : 328 sequences (57.7%)
+    - Right only : 229 sequences (40.3%)
+    - Left only  :  11 sequences (1.9%)
+    - Neither    :   0 sequences (0.0%)
+    - No sequence has zero hand detection — all data is usable.
+    - ASL is predominantly right-hand dominant, consistent with literature.
+
+OUTPUT FILES:
+  - results/eda_b2_class_balance.png
+  - results/eda_b3_split_breakdown.png
+  - results/eda_b4_zero_frames.png
+  - results/eda_b5_feature_variance.png
+  - results/eda_b6_temporal_dynamics.png
+  - results/eda_b7_hand_usage.png
+
+LESSONS:
+  - With only 5.7 samples/class on average, this is an extremely few-shot
+    classification problem. Standard accuracy benchmarks should be interpreted
+    with this in mind.
+  - Top-5 accuracy is a better primary metric than top-1 for this dataset
+    (as used in the original WLASL paper).
+  - The 57.7% both-hands usage confirms that including pose landmarks
+    is important — the model needs body context, not just hand shape.
+
+
+------------------------------------------------------------
+STEP 5 — Model Architecture (train.py)
+------------------------------------------------------------
+WHAT WE BUILT:
+  Two sequence classifiers trained on (568, 30, 225) data.
+
+  Model A — BiLSTMClassifier:
+    BiLSTM(225 → 256×2, layers=2, dropout=0.3)
+    → mean pool over T=30
+    → Linear(512→256) + ReLU + Dropout(0.3)
+    → Linear(256→100)
+
+  Model B — TransformerClassifier:
+    Linear(225→256)  [input projection]
+    → SinusoidalPE(d=256, max_len=30)
+    → TransformerEncoder(d=256, heads=8, FFN=512, layers=4, Pre-LN, dropout=0.1)
+    → mean pool over T=30
+    → Linear(256→100)
+
+  Training setup:
+    - WeightedRandomSampler: equalizes class sampling (critical for 5.7 mean samples/class)
+    - Label smoothing (0.1): regularizes over-confident predictions on small data
+    - ReduceLROnPlateau: halves LR after 5 epochs of no val_acc improvement
+    - Early stopping: patience=15 epochs on val_acc
+    - Gradient clipping: max_norm=1.0
+    - BiLSTM lr=1e-3, Transformer lr=5e-4
+
+  Augmentations:
+    - Gaussian noise (sigma=0.01) on landmark coordinates
+    - Frame dropout: zero 1-2 random frames (p=0.5)
+    - Temporal scaling: resample at 0.8-1.2x speed (p=0.4)
+
+DESIGN DECISIONS:
+  - Pre-LayerNorm (norm_first=True) in Transformer: more stable training
+    on small datasets vs post-LN.
+  - Mean pooling over timesteps: more robust than using only the last
+    hidden state — captures the whole sign trajectory.
+  - IMAGE mode MediaPipe for demo.py: simpler real-time pipeline than
+    VIDEO mode, consistent with preprocessing.
+  - Checkpoint saves {model_state, config, metrics} so demo.py can
+    reconstruct the model without hardcoded architecture parameters.
+
+EXPECTED PERFORMANCE (WLASL100 literature):
+  - Top-1 accuracy: ~30–50% (baseline methods)
+  - Top-5 accuracy: ~60–80%
+  - Small dataset + 100 classes = inherently hard problem.
+    Performance should be evaluated against these baselines.
+
+------------------------------------------------------------
+STEP 6 — Training on Google Colab (train.py)
+------------------------------------------------------------
+WHAT WE DID:
+  - Uploaded data/sequences/ (~38 MB) to Google Drive.
+  - Ran train.py on Colab T4 GPU for both BiLSTM and Transformer.
+  - Training completed in ~10-15 minutes total (vs hours on CPU).
+
+TRAINING RESULTS:
+  BiLSTM:
+    - Best val top-1: 28.0%  at epoch 42
+    - Early stopping triggered at patience=15 after epoch 42
+
+  Transformer:
+    - Best val top-1: 41.0%  at epoch 32
+    - Early stopping triggered at patience=15 after epoch 32
+    - Converged faster and to a better optimum than BiLSTM
+
+KEY OBSERVATIONS:
+  - Transformer outperformed BiLSTM significantly on validation set.
+  - Both models stopped well before 100 epochs — early stopping working correctly.
+  - Transformer converged ~10 epochs faster, suggesting attention mechanism
+    captures sign structure more efficiently than recurrence.
+  - Label smoothing + WeightedRandomSampler helped prevent collapse on
+    low-frequency classes.
+
+OUTPUT FILES:
+  - models/bilstm_best.pt        {model_state, config, metrics}
+  - models/transformer_best.pt   {model_state, config, metrics}
+  - models/training_curves.png
+
+
+------------------------------------------------------------
+STEP 7 — Evaluation (evaluate.py)
+------------------------------------------------------------
+WHAT WE DID:
+  - Evaluated both trained models on the held-out test split (61 samples).
+  - Generated confusion matrix, per-class accuracy, and model comparison chart.
+
+FINAL TEST RESULTS:
+  +-------------+------------+------------+
+  | Model       | Top-1 Acc  | Top-5 Acc  |
+  +-------------+------------+------------+
+  | BiLSTM      |   24.6%    |   59.0%    |
+  | Transformer |   34.4%    |   70.5%    |
+  +-------------+------------+------------+
+
+  Transformer is the clear winner: +9.8% top-1, +11.5% top-5.
+
+COMPARISON TO LITERATURE:
+  - WLASL100 literature range: top-1 ~30-50%, top-5 ~60-80%
+  - Transformer falls within expected range on both metrics.
+  - BiLSTM slightly below range on top-1, within range on top-5.
+  - Results are reasonable given: only 568 training sequences,
+    ~5.7 samples/class average, no video-level fine-tuning.
+
+PER-CLASS FINDINGS:
+  - Both models correctly classify several classes at 100%
+    (e.g. cousin, dark, drink, can, brown for BiLSTM;
+         all, clothes, can, brown, birthday for Transformer).
+  - Consistently hard classes (0% for both models):
+    want, what, who, woman — likely visually similar signs
+    that are hard to distinguish with only pose+hand landmarks.
+  - Many test classes have only 1 sample, making per-class
+    accuracy binary (100% or 0%) — top-5 is more meaningful.
+
+KEY OBSERVATIONS:
+  - Top-5 accuracy (70.5% Transformer) is practically useful:
+    in a real application, showing top-5 predictions gives the
+    user a correct answer nearly 3 out of 4 times.
+  - The confusion matrix reveals that misclassifications tend to
+    occur between semantically or visually similar signs.
+  - Small test set (61 samples) means results have high variance;
+    a larger test set would give more stable estimates.
+
+OUTPUT FILES:
+  - results/confusion_bilstm.png
+  - results/confusion_transformer.png
+  - results/model_comparison.png
+  - results/per_class_accuracy.csv
+
+
+------------------------------------------------------------
+REMAINING STEPS
+------------------------------------------------------------
+  [ ] demo.py:
+        - Real-time webcam inference
+        - State machine: IDLE → RECORDING → INFERRING → DISPLAYING
+        - MediaPipe Holistic in IMAGE mode
+        - Show top-3 predictions with confidence bars
+
+============================================================

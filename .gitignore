@@ -17,3 +17,8 @@ Thumbs.db
 
 # Dataset download staging
 **/_kaggle_staging/
+
+Findings.txt
+
+# Large binary data — too big for GitHub
+part2_word_recognizer/data/videos/
