@@ -16,3 +16,6 @@ Thumbs.db
 .ipynb_checkpoints/
 
 Findings.txt
+
+# Large binary data — too big for GitHub
+part2_word_recognizer/data/videos/
