@@ -22,3 +22,11 @@ Findings.txt
 
 # Large binary data — too big for GitHub
 part2_word_recognizer/data/videos/
+
+# Model weights (use Git LFS or download separately)
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.h5
+*.keras

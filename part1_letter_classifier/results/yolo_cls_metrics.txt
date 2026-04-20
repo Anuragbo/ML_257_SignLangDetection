@@ -1,0 +1,49 @@
+weights: C:\D\Projects\Academic\257-ML\sign_language_translator\ML_257_SignLangDetection\part1_letter_classifier\models\yolo_cls_best.pt
+val_dir: C:\D\Projects\Academic\257-ML\sign_language_translator\ML_257_SignLangDetection\part1_letter_classifier\data\yolo_cls_dataset\val
+accuracy: 0.962227
+precision_macro: 0.966743
+recall_macro: 0.962302
+f1_macro: 0.961737
+
+              precision    recall  f1-score   support
+
+           0       0.71      0.86      0.77        14
+           1       0.82      1.00      0.90        14
+           2       1.00      1.00      1.00        14
+           3       1.00      1.00      1.00        14
+           4       0.87      0.93      0.90        14
+           5       0.92      0.86      0.89        14
+           6       1.00      0.64      0.78        14
+           7       1.00      1.00      1.00        14
+           8       1.00      1.00      1.00        14
+           9       1.00      1.00      1.00        14
+           a       1.00      1.00      1.00        14
+           b       1.00      1.00      1.00        14
+           c       1.00      1.00      1.00        14
+           d       0.93      0.93      0.93        14
+           e       1.00      1.00      1.00        14
+           f       1.00      1.00      1.00        14
+           g       1.00      1.00      1.00        14
+           h       1.00      1.00      1.00        14
+           i       1.00      1.00      1.00        14
+           j       1.00      1.00      1.00        14
+           k       1.00      1.00      1.00        14
+           l       1.00      1.00      1.00        14
+           m       1.00      1.00      1.00        14
+           n       1.00      1.00      1.00        14
+           o       0.82      0.64      0.72        14
+           p       1.00      1.00      1.00        14
+           q       1.00      1.00      1.00        14
+           r       1.00      1.00      1.00        14
+           s       1.00      1.00      1.00        14
+           t       1.00      1.00      1.00        13
+           u       1.00      1.00      1.00        14
+           v       1.00      1.00      1.00        14
+           w       0.74      1.00      0.85        14
+           x       1.00      1.00      1.00        14
+           y       1.00      1.00      1.00        14
+           z       1.00      0.79      0.88        14
+
+    accuracy                           0.96       503
+   macro avg       0.97      0.96      0.96       503
+weighted avg       0.97      0.96      0.96       503

@@ -1,0 +1,22 @@
+# Optional sparse bigrams: word1 word2<TAB>count  or  word1 word2 count
+# Used for light sentence-level scoring (not a full language model).
+
+hello world	50
+thank you	40
+how are	25
+you are	30
+my name	20
+sign language	15
+asl is	10
+the word	12
+read and	8
+here is	8
+tiktok instagram	20
+instagram whatsapp	18
+whatsapp snapchat	16
+snapchat youtube	16
+youtube facebook	16
+facebook spotify	14
+spotify uber	12
+uber netflix	12
+netflix zoom	12

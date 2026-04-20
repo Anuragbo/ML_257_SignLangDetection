@@ -18,6 +18,25 @@ body {
   padding: 2rem 1.25rem 3rem;
 }
 
+.server-banner {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.4);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 10px;
+}
+
+.server-banner code {
+  font-size: 0.8rem;
+  color: #fde68a;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
 .header h1 {
   font-size: 1.5rem;
   font-weight: 600;
@@ -54,6 +73,28 @@ body {
   gap: 1rem;
 }
 
+.callout {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+  background: rgba(56, 189, 248, 0.08);
+  border-left: 3px solid #38bdf8;
+  border-radius: 6px;
+}
+
+.callout strong {
+  color: #e2e8f0;
+}
+
+.model-options-hint {
+  margin: -0.35rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #94a3b8;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -74,6 +115,12 @@ select {
   background: #0f172a;
   color: #f1f5f9;
   font-size: 0.95rem;
+}
+
+/* Multi-row model list (PyTorch image backend): all options visible */
+select[size] {
+  padding: 0.35rem 0.5rem;
+  line-height: 1.45;
 }
 
 .upload-zone {
@@ -231,4 +278,172 @@ select {
 .footer code {
   font-size: 0.75rem;
   word-break: break-all;
+}
+
+.decoder-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.decoder-heading {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-clear-decoder {
+  flex-shrink: 0;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+}
+
+.decoder {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(56, 189, 248, 0.2);
+}
+
+.decoder.hidden {
+  display: none;
+}
+
+.decoder-toggle-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin: 0 0 0.35rem;
+}
+
+.decoder-toggle-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+.decoder-toggle {
+  display: inline-flex;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.decoder-toggle-btn {
+  margin: 0;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.5);
+  border: none;
+  cursor: pointer;
+}
+
+.decoder-toggle-btn:hover {
+  color: #e2e8f0;
+}
+
+.decoder-toggle-btn.active {
+  color: #0f172a;
+  background: #7dd3fc;
+  font-weight: 600;
+}
+
+.decoder-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.decoder-sentence.hidden {
+  display: none;
+}
+
+.decoder-words-wrap.hidden {
+  display: none;
+}
+
+.decoder-word-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.65rem;
+}
+
+.decoder-chip {
+  display: inline-block;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #bae6fd;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 8px;
+}
+
+.decoder-chip-empty {
+  font-weight: 500;
+  color: #64748b;
+  border-style: dashed;
+}
+
+.decoder-chunks {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #94a3b8;
+  word-break: break-all;
+}
+
+#decoderBeamBlock.hidden {
+  display: none;
+}
+
+.decoder-sentence {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #7dd3fc;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.decoder-meta {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.decoder-smoothed {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.decoder-label {
+  color: #64748b;
+}
+
+.decoder-subtitle {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  margin: 0 0 0.35rem;
+}
+
+.decoder-beams {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.82rem;
+  color: #94a3b8;
+  line-height: 1.55;
 }
