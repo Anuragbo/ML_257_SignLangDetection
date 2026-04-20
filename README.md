@@ -1,6 +1,6 @@
 # Sign language detection (ML 257) — Part 1
 
-ASL **letter** classification from static images: MediaPipe hand landmarks, then SVM / Random Forest / MLP / CNN. A **webcam demo** uses the trained sklearn models on your machine.
+ASL **letter** classification from static images: MediaPipe hand landmarks, then SVM / Random Forest / MLP; optional **CNN** and torchvision **MobileNetV2**, **ResNet-18**, and **VGG-11-BN** on 64×64 RGB crops; optional **YOLO** classification. A **webcam demo** uses the trained sklearn models on your machine.
 
 ---
 
@@ -121,7 +121,7 @@ docker compose --profile pipeline run --rm signlang python /app/part1_letter_cla
 
 The **`signlang-ui`** service runs the **Web UI** (Flask: upload + live camera in the browser) on port **5000** — see **Web UI (Docker)** below (`docker compose up signlang-ui`).
 
-Training can take a long time (especially the CNN). The image uses **CPU** PyTorch to avoid huge CUDA downloads.
+Training can take a long time (especially CNN and torchvision transfer models). The image uses **CPU** PyTorch to avoid huge CUDA downloads. MobileNet / ResNet / VGG use ImageNet-pretrained weights on first run (downloaded once by torchvision).
 
 ---
 
@@ -186,7 +186,7 @@ python run_pipeline.py --skip-training
 | Output | Location |
 |--------|----------|
 | Preprocessed arrays (`X.npy`, `y.npy`, `label_map.npy`, test splits) | `part1_letter_classifier/data/` |
-| Saved models (`.pkl`, `cnn_best.pt`) | `part1_letter_classifier/models/` |
+| Saved models (`.pkl`, `cnn_best.pt`, `mobilenet_best.pt`, `resnet18_best.pt`, `vgg11_bn_best.pt`, YOLO weights) | `part1_letter_classifier/models/` |
 | Plots (confusion matrices, comparison chart) | `part1_letter_classifier/results/` |
 | MediaPipe model (downloaded once) | `part1_letter_classifier/src/hand_landmarker.task` |
 
@@ -222,6 +222,8 @@ python part1_letter_classifier/src/preprocessing.py
 python part1_letter_classifier/src/train.py --mode all
 python part1_letter_classifier/src/evaluate.py
 ```
+
+**Part 1 `train.py` modes:** `--mode landmarks` (SVM, RF, MLP only), `--mode cnn`, `--mode mobilenet`, `--mode resnet` (ResNet-18), `--mode vgg` (VGG-11-BN), **`--mode transfer`** (trains MobileNet + ResNet + VGG in one run—skips CNN and landmarks), `--mode all` (landmarks plus every image model). Use **`--epochs N`** to cap training length (default 50). Transfer models use an ImageNet backbone by default; add `--no-imagenet-weights` to train those backbones from scratch.
 
 ---
 
@@ -339,6 +341,21 @@ python read_pdf.py "path\to\your\file.pdf"
 ## 9. Jupyter notebooks
 
 Open `part1_letter_classifier/notebooks/` in Jupyter on the host. The first cell assumes the notebook’s working directory is the `notebooks` folder.
+
+---
+
+## 10. Part 3 — fingerspelling decoder (letters → words → sentences)
+
+`part3_decoder/` is a **separate** rule-based post-processor: feed it per-frame letter predictions (from any CNN/YOLO/sklearn pipeline) and it returns smoothed letters, decoded words, and an optional sentence with beam alternatives. It does **not** depend on the Part 1 training code.
+
+```bash
+python -m part3_decoder.demo_decode
+python -m part3_decoder.demo_decode --word HELXO
+```
+
+Details, scoring, and tuning: **`part3_decoder/README.md`**.
+
+The **web UI** (`python part1_letter_classifier/ui/app.py`) runs this decoder when you use **Start camera** or **upload a video** (letter backends only: MediaPipe, PyTorch image, or YOLO). The JSON field `decoder` is shown on the page under “Part 3 decoder.”
 
 ---
 

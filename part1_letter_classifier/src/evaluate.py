@@ -137,20 +137,60 @@ def main():
         y_pred = mlp.predict(X_test)
         results.append(evaluate_model("MLP", y_test, y_pred, label_names, args.output_dir))
 
-    # ── CNN ───────────────────────────────────────────────────────────────
+    # ── CNN / MobileNetV2 (same image test tensors) ─────────────────────────
     cnn_path = os.path.join(args.models_dir, "cnn_best.pt")
+    mb_path = os.path.join(args.models_dir, "mobilenet_best.pt")
     X_test_img_path = os.path.join(args.data_dir, "X_test_img.npy")
     y_test_img_path = os.path.join(args.data_dir, "y_test_img.npy")
 
-    if os.path.exists(cnn_path) and os.path.exists(X_test_img_path):
-        from train import ASL_CNN, predict_cnn
+    X_test_img = y_test_img = None
+    if os.path.exists(X_test_img_path) and os.path.exists(y_test_img_path):
         X_test_img = np.load(X_test_img_path)
         y_test_img = np.load(y_test_img_path)
+
+    if X_test_img is not None:
+        from train import (
+            ASL_CNN,
+            build_mobilenet_v2,
+            build_resnet18,
+            build_vgg11_bn,
+            predict_cnn,
+        )
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        cnn = ASL_CNN(num_classes=len(label_map)).to(device)
-        cnn.load_state_dict(torch.load(cnn_path, map_location=device))
-        y_pred = predict_cnn(cnn, X_test_img)
-        results.append(evaluate_model("CNN", y_test_img, y_pred, label_names, args.output_dir))
+        n_cls = len(label_map)
+
+        if os.path.exists(cnn_path):
+            cnn = ASL_CNN(num_classes=n_cls).to(device)
+            cnn.load_state_dict(torch.load(cnn_path, map_location=device))
+            y_pred = predict_cnn(cnn, X_test_img)
+            results.append(evaluate_model("CNN", y_test_img, y_pred, label_names, args.output_dir))
+
+        if os.path.exists(mb_path):
+            mb = build_mobilenet_v2(num_classes=n_cls, pretrained=False).to(device)
+            mb.load_state_dict(torch.load(mb_path, map_location=device))
+            y_pred_m = predict_cnn(mb, X_test_img)
+            results.append(
+                evaluate_model("MobileNetV2", y_test_img, y_pred_m, label_names, args.output_dir)
+            )
+
+        rn_path = os.path.join(args.models_dir, "resnet18_best.pt")
+        if os.path.exists(rn_path):
+            rn = build_resnet18(num_classes=n_cls, pretrained=False).to(device)
+            rn.load_state_dict(torch.load(rn_path, map_location=device))
+            y_pred_r = predict_cnn(rn, X_test_img)
+            results.append(
+                evaluate_model("ResNet-18", y_test_img, y_pred_r, label_names, args.output_dir)
+            )
+
+        vg_path = os.path.join(args.models_dir, "vgg11_bn_best.pt")
+        if os.path.exists(vg_path):
+            vg = build_vgg11_bn(num_classes=n_cls, pretrained=False).to(device)
+            vg.load_state_dict(torch.load(vg_path, map_location=device))
+            y_pred_v = predict_cnn(vg, X_test_img)
+            results.append(
+                evaluate_model("VGG-11-BN", y_test_img, y_pred_v, label_names, args.output_dir)
+            )
 
     if results:
         plot_comparison(results, args.output_dir)

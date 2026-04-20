@@ -3,7 +3,7 @@
 Run the full Part 1 pipeline from a clean state:
 
   1. Preprocessing  — images under data/asl_dataset → X.npy, y.npy, label_map.npy
-  2. Training       — SVM, Random Forest, MLP, and CNN (--mode all)
+  2. Training       — SVM, RF, MLP, CNN, MobileNetV2, ResNet-18, VGG-11-BN (--mode all)
   3. Evaluation     — metrics, confusion matrices, comparison chart in results/
 
 Usage:
@@ -97,7 +97,7 @@ def main() -> None:
         run_step("1/3 Preprocessing (MediaPipe landmarks)", PREPROCESSING)
 
     if not args.skip_training:
-        run_step("2/3 Training (SVM, RF, MLP, CNN)", TRAIN, ["--mode", "all"])
+        run_step("2/3 Training (SVM, RF, MLP, CNN, MobileNet, ResNet, VGG)", TRAIN, ["--mode", "all"])
 
     run_step("3/3 Evaluation (metrics + plots)", EVALUATE)
 

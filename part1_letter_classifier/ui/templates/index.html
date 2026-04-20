@@ -3,33 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ASL letter — image or live video</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta http-equiv="Cache-Control" content="no-store, max-age=0">
+  <title>ASL demo UI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=8">
 </head>
 <body>
   <div class="page">
+    <div id="serverBanner" class="server-banner" role="alert" hidden></div>
     <header class="header">
-      <h1>ASL letter recognition</h1>
-      <p class="sub">Upload a still photo <strong>or</strong> use <strong>live camera</strong> (browser captures video; frames are sent to the server — works with Docker). Same MediaPipe + sklearn models as <code>demo.py</code>.</p>
+      <h1>ASL frontend</h1>
+      <p class="sub">One UI for <strong>MediaPipe letters</strong>, <strong>PyTorch image letters</strong> (CNN, MobileNet, ResNet, VGG), <strong>YOLO letters</strong>, and <strong>WLASL word recognition</strong>. Upload a <strong>still image or video</strong> for letter models (videos are sampled server-side); use <strong>live camera</strong> for WLASL or for letters — letter streams also run the <strong>Part 3 decoder</strong> (smoothed letters → words → sentence).</p>
     </header>
 
     <main class="card">
       <form id="form" class="form">
+        <p class="callout" id="backendTip">
+          <strong>How to see every model:</strong> choose <strong>Backend</strong> first — the <strong>Model</strong> menu below updates. For CNN, MobileNet, ResNet, or VGG, pick <strong>PyTorch image</strong>, then open <strong>Model</strong> (four options).
+        </p>
         <label class="field">
-          <span class="label">Classifier</span>
-          <select name="model" id="model">
-            <option value="mlp" selected>MLP</option>
-            <option value="svm">SVM</option>
-            <option value="rf">Random Forest</option>
+          <span class="label">Backend</span>
+          <select name="backend" id="backend">
+            <option value="mediapipe" selected>MediaPipe letter classifier</option>
+            <option value="image">PyTorch image (CNN / MobileNet / ResNet / VGG)</option>
+            <option value="yolo">YOLO letter classifier</option>
+            <option value="wlasl">WLASL word recognizer</option>
           </select>
         </label>
+
+        <label class="field">
+          <span class="label" id="modelLabel">Model</span>
+          <select name="model" id="model" size="1"></select>
+        </label>
+        <p class="model-options-hint" id="modelOptionsHint" aria-live="polite"></p>
+
+        <p class="live-hint" id="modeHint"></p>
 
         <div class="live-block">
           <span class="label">Live video</span>
           <div class="video-wrap">
             <video id="liveVideo" playsinline muted autoplay></video>
           </div>
-          <p class="live-hint">Allow camera access. Preview is local; predictions use the selected model (~3 frames/sec).</p>
+          <p class="live-hint">Browser captures the camera locally; frames are posted to the Flask server. WLASL uses a rolling 30-frame buffer, so it needs a few seconds before the first word prediction appears. Letter backends (MediaPipe, PyTorch image, YOLO) buffer frames for the Part 3 text decoder — spell slowly with short pauses between words.</p>
           <div class="live-actions">
             <button type="button" class="btn btn-live" id="btnLiveStart">Start camera</button>
             <button type="button" class="btn btn-secondary" id="btnLiveStop" disabled>Stop</button>
@@ -37,31 +51,99 @@
         </div>
 
         <label class="field upload-zone" id="zone">
-          <input type="file" name="image" id="file" accept="image/*" hidden>
-          <span class="upload-hint" id="hint">Or click / drop a still image here</span>
+          <input type="file" name="image" id="file" accept="image/*,video/*" hidden>
+          <span class="upload-hint" id="hint">Click or drop an image or video here</span>
           <span class="file-name" id="fileName"></span>
         </label>
 
-        <button type="submit" class="btn" id="submit">Predict from image</button>
+        <button type="submit" class="btn" id="submit">Predict from image or video</button>
       </form>
 
       <div id="status" class="status" aria-live="polite"></div>
 
       <section id="result" class="result hidden">
-        <div class="letter-box" id="letterBox">—</div>
+        <div class="letter-box" id="letterBox">-</div>
         <p class="conf" id="confidence"></p>
         <h3 class="list-title">Top predictions</h3>
         <ol id="topList" class="top-list"></ol>
       </section>
+
+      <section id="decoderSection" class="decoder hidden" aria-live="polite">
+        <div class="decoder-header-row">
+          <h3 class="list-title decoder-heading">Part 3 decoder (fingerspelling)</h3>
+          <button type="button" class="btn btn-secondary btn-clear-decoder" id="btnClearDecoder" title="Clear decoded text and reset the live buffer">
+            Clear text
+          </button>
+        </div>
+        <div class="decoder-toggle-row">
+          <span class="decoder-toggle-label">View</span>
+          <div class="decoder-toggle" role="tablist" aria-label="Decoder output style">
+            <button type="button" class="decoder-toggle-btn" id="decoderModeSentence" role="tab" aria-selected="true">Sentence</button>
+            <button type="button" class="decoder-toggle-btn" id="decoderModeWords" role="tab" aria-selected="false">Words</button>
+          </div>
+        </div>
+        <p class="decoder-hint" id="decoderModeHint"></p>
+        <p class="decoder-sentence" id="decoderSentence"></p>
+        <div id="decoderWordsWrap" class="decoder-words-wrap hidden">
+          <div id="decoderWordChips" class="decoder-word-chips"></div>
+          <p class="decoder-chunks"><span class="decoder-label">Letter groups:</span> <span id="decoderLetterChunks"></span></p>
+        </div>
+        <p class="decoder-meta" id="decoderMeta"></p>
+        <p class="decoder-smoothed"><span class="decoder-label">Smoothed letters:</span> <span id="decoderSmoothed"></span></p>
+        <div id="decoderBeamBlock">
+          <h4 class="decoder-subtitle">Sentence hypotheses (beam)</h4>
+          <ol id="decoderBeams" class="decoder-beams"></ol>
+        </div>
+      </section>
     </main>
 
     <footer class="footer">
-      <p>Requires <code>part1_letter_classifier/data/label_map.npy</code> and trained <code>.pkl</code> models under <code>models/</code>.</p>
+      <p>
+        MediaPipe: <code>data/label_map.npy</code> + <code>models/*.pkl</code>.
+        Image: <code>models/cnn_best.pt</code>, <code>mobilenet_best.pt</code>, <code>resnet18_best.pt</code>, or <code>vgg11_bn_best.pt</code>.
+        YOLO: <code>models/yolo_cls_best.pt</code>.
+        WLASL: <code>part2_word_recognizer/models/bilstm_best.pt</code> or <code>transformer_best.pt</code>.
+        Video uploads: default max ~128 MB (set <code>MAX_VIDEO_UPLOAD_MB</code> to change); long clips are downsampled to at most 300 frames for prediction.
+      </p>
     </footer>
   </div>
 
   <script>
+    /** Shown under Model so users know what to expect for each backend (esp. PyTorch image = 4 choices). */
+    const MODEL_OPTIONS_HINT = {
+      mediapipe: 'Current Model options: MLP, SVM, Random Forest.',
+      image: 'Current Model options: CNN, MobileNetV2, ResNet-18, VGG-11-BN.',
+      yolo: 'Current Model options: YOLO classification.',
+      wlasl: 'Current Model options: Transformer, BiLSTM (live camera only).',
+    };
+
+    const MODEL_OPTIONS = {
+      mediapipe: [
+        { value: 'mlp', label: 'MLP' },
+        { value: 'svm', label: 'SVM' },
+        { value: 'rf', label: 'Random Forest' },
+      ],
+      image: [
+        { value: 'cnn', label: 'CNN (custom)' },
+        { value: 'mobilenet', label: 'MobileNetV2' },
+        { value: 'resnet', label: 'ResNet-18' },
+        { value: 'vgg', label: 'VGG-11-BN' },
+      ],
+      yolo: [
+        { value: 'yolo_cls', label: 'YOLO classification' },
+      ],
+      wlasl: [
+        { value: 'transformer', label: 'Transformer' },
+        { value: 'bilstm', label: 'BiLSTM' },
+      ],
+    };
+
     const form = document.getElementById('form');
+    const backendEl = document.getElementById('backend');
+    const modelEl = document.getElementById('model');
+    const modelLabelEl = document.getElementById('modelLabel');
+    const modelOptionsHintEl = document.getElementById('modelOptionsHint');
+    const modeHintEl = document.getElementById('modeHint');
     const fileInput = document.getElementById('file');
     const zone = document.getElementById('zone');
     const hint = document.getElementById('hint');
@@ -71,16 +153,57 @@
     const letterBox = document.getElementById('letterBox');
     const confidenceEl = document.getElementById('confidence');
     const topList = document.getElementById('topList');
+    const decoderSection = document.getElementById('decoderSection');
+    const decoderModeSentence = document.getElementById('decoderModeSentence');
+    const decoderModeWords = document.getElementById('decoderModeWords');
+    const decoderModeHint = document.getElementById('decoderModeHint');
+    const decoderSentence = document.getElementById('decoderSentence');
+    const decoderWordsWrap = document.getElementById('decoderWordsWrap');
+    const decoderWordChips = document.getElementById('decoderWordChips');
+    const decoderLetterChunks = document.getElementById('decoderLetterChunks');
+    const decoderMeta = document.getElementById('decoderMeta');
+    const decoderSmoothed = document.getElementById('decoderSmoothed');
+    const decoderBeamBlock = document.getElementById('decoderBeamBlock');
+    const decoderBeams = document.getElementById('decoderBeams');
+    const DECODER_MODE_KEY = 'asl-fingerspell-decoder-view';
+    let lastDecoderPayload = null;
+    let decoderViewMode = sessionStorage.getItem(DECODER_MODE_KEY) || 'sentence';
     const submitBtn = document.getElementById('submit');
     const liveVideo = document.getElementById('liveVideo');
     const btnLiveStart = document.getElementById('btnLiveStart');
     const btnLiveStop = document.getElementById('btnLiveStop');
     const snapCanvas = document.createElement('canvas');
+    const clientId = (() => {
+      const key = 'asl-demo-client-id';
+      let value = localStorage.getItem(key);
+      if (!value) {
+        value = 'client-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        localStorage.setItem(key, value);
+      }
+      return value;
+    })();
+
     let liveStream = null;
     let liveTimer = null;
-    const LIVE_INTERVAL_MS = 350;
+    let liveRequestBusy = false;
+    /** Prevents double POST when the submit handler is triggered twice (e.g. fast double-clicks). */
+    let uploadRequestBusy = false;
+    const LIVE_INTERVAL_MS = 450;
+    /** Still-image API calls; keep moderate. */
+    const FETCH_TIMEOUT_MS = 6000;
+    /** Live camera: MediaPipe + model + Part 3 decoder can exceed a few seconds on CPU. */
+    const LIVE_FETCH_TIMEOUT_MS = 90000;
+    const VIDEO_FETCH_TIMEOUT_MS = 180000;
 
-    zone.addEventListener('click', () => fileInput.click());
+    function isVideoFile(file) {
+      if (!file) return false;
+      if (file.type && file.type.startsWith('video/')) return true;
+      return /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(file.name || '');
+    }
+
+    // Do NOT call fileInput.click() here: the upload zone is a <label> around the input, so a click
+    // already opens the picker once. A redundant .click() caused a double dialog / double upload feel.
+
     zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag'); });
     zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
     zone.addEventListener('drop', (e) => {
@@ -92,6 +215,7 @@
       }
     });
     fileInput.addEventListener('change', updateFileName);
+    backendEl.addEventListener('change', syncBackendUI);
 
     function updateFileName() {
       const f = fileInput.files[0];
@@ -106,44 +230,305 @@
 
     function hideResult() {
       resultEl.classList.add('hidden');
+      decoderSection.classList.add('hidden');
+    }
+
+    function syncDecoderToggleUI() {
+      const isSentence = decoderViewMode === 'sentence';
+      decoderModeSentence.classList.toggle('active', isSentence);
+      decoderModeSentence.setAttribute('aria-selected', isSentence ? 'true' : 'false');
+      decoderModeWords.classList.toggle('active', !isSentence);
+      decoderModeWords.setAttribute('aria-selected', !isSentence ? 'true' : 'false');
+      decoderModeHint.textContent = isSentence
+        ? 'Full decoded line and beam-ranked sentence options.'
+        : 'Single best word only (first word of the beam). Letter groups show smoothed chunks before the lexicon.';
+    }
+
+    function decodedWordList(dec) {
+      const beam0 = (dec.beam_top && dec.beam_top[0] && dec.beam_top[0].words) || [];
+      if (beam0.length) return beam0;
+      const s = (dec.sentence || '').trim();
+      if (!s) return [];
+      return s.split(/\s+/).filter(Boolean);
+    }
+
+    function renderDecoderPrimary() {
+      if (!lastDecoderPayload) return;
+      const dec = lastDecoderPayload;
+      const isSentence = decoderViewMode === 'sentence';
+      decoderSentence.classList.toggle('hidden', !isSentence);
+      decoderWordsWrap.classList.toggle('hidden', isSentence);
+      decoderBeamBlock.classList.toggle('hidden', !isSentence);
+      if (isSentence) {
+        decoderSentence.textContent = dec.sentence || '(empty)';
+      } else {
+        decoderWordChips.innerHTML = '';
+        const words = decodedWordList(dec);
+        const oneWord = words.length ? [words[0]] : [];
+        if (oneWord.length === 0) {
+          const span = document.createElement('span');
+          span.className = 'decoder-chip decoder-chip-empty';
+          span.textContent = '(no words yet)';
+          decoderWordChips.appendChild(span);
+        } else {
+          const span = document.createElement('span');
+          span.className = 'decoder-chip';
+          span.textContent = oneWord[0];
+          decoderWordChips.appendChild(span);
+        }
+        const frags = dec.word_fragments || [];
+        decoderLetterChunks.textContent = frags.length ? frags.join(' · ') : '—';
+      }
+    }
+
+    function applyDecoderPayload(dec) {
+      if (!dec || dec.error) {
+        decoderSection.classList.add('hidden');
+        lastDecoderPayload = null;
+        return;
+      }
+      lastDecoderPayload = dec;
+      decoderSection.classList.remove('hidden');
+      syncDecoderToggleUI();
+      const bits = [];
+      if (dec.frames_buffered != null) bits.push('buffered frames: ' + dec.frames_buffered);
+      if (decoderViewMode === 'sentence' && dec.word_fragments && dec.word_fragments.length) {
+        bits.push('fragments: ' + dec.word_fragments.join(' | '));
+      }
+      decoderMeta.textContent = bits.join(' · ');
+      decoderSmoothed.textContent = dec.smoothed_letters || '';
+      decoderBeams.innerHTML = '';
+      (dec.beam_top || []).forEach((row) => {
+        const li = document.createElement('li');
+        li.textContent = (row.words || []).join(' ') + '  (score ' + row.score + ')';
+        decoderBeams.appendChild(li);
+      });
+      renderDecoderPrimary();
+    }
+
+    function setDecoderViewMode(mode) {
+      decoderViewMode = mode === 'words' ? 'words' : 'sentence';
+      sessionStorage.setItem(DECODER_MODE_KEY, decoderViewMode);
+      syncDecoderToggleUI();
+      if (lastDecoderPayload) {
+        applyDecoderPayload(lastDecoderPayload);
+      }
+    }
+
+    decoderModeSentence.addEventListener('click', () => setDecoderViewMode('sentence'));
+    decoderModeWords.addEventListener('click', () => setDecoderViewMode('words'));
+
+    const btnClearDecoder = document.getElementById('btnClearDecoder');
+
+    function clearDecoderUi() {
+      lastDecoderPayload = null;
+      decoderSection.classList.add('hidden');
+      decoderSentence.textContent = '';
+      decoderModeHint.textContent = '';
+      decoderMeta.textContent = '';
+      decoderSmoothed.textContent = '';
+      decoderWordChips.innerHTML = '';
+      decoderLetterChunks.textContent = '';
+      decoderBeams.innerHTML = '';
+    }
+
+    async function clearDecoderOutput() {
+      clearDecoderUi();
+      try {
+        await postResetWlasl();
+        showStatus('Decoded text cleared. Live buffer reset.', false);
+      } catch (e) {
+        showStatus('Cleared locally; server reset may have failed.', false);
+      }
+    }
+
+    btnClearDecoder.addEventListener('click', () => { void clearDecoderOutput(); });
+
+    async function refreshImageWeightsHint() {
+      if (!modelOptionsHintEl) return;
+      const base = MODEL_OPTIONS_HINT.image;
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        const r = await fetch('/api/image-checkpoints', { signal: controller.signal });
+        clearTimeout(t);
+        const ck = await r.json();
+        const missing = Object.entries(ck).filter(([, ok]) => !ok).map(([k]) => k);
+        if (missing.length === 0) {
+          modelOptionsHintEl.textContent = base + ' All weight files are present.';
+        } else {
+          modelOptionsHintEl.textContent = base + ' Missing weights for: ' + missing.join(', ') +
+            '. From repo root run: python part1_letter_classifier/src/train.py --mode transfer';
+        }
+      } catch (e) {
+        modelOptionsHintEl.textContent = base;
+      }
+    }
+
+    function syncBackendUI() {
+      const backend = backendEl.value;
+      modelEl.innerHTML = '';
+      const opts = MODEL_OPTIONS[backend] || [];
+      opts.forEach((opt) => {
+        const node = document.createElement('option');
+        node.value = opt.value;
+        node.textContent = opt.label;
+        modelEl.appendChild(node);
+      });
+      if (modelOptionsHintEl) {
+        if (backend === 'image') {
+          modelOptionsHintEl.textContent = MODEL_OPTIONS_HINT.image;
+          void refreshImageWeightsHint();
+        } else {
+          modelOptionsHintEl.textContent = MODEL_OPTIONS_HINT[backend] || '';
+        }
+      }
+
+      // List all choices at once for PyTorch image (otherwise a closed <select> hides options).
+      if (backend === 'image' && opts.length > 1) {
+        modelEl.size = opts.length;
+        modelEl.style.minHeight = '7rem';
+      } else {
+        modelEl.size = 1;
+        modelEl.style.minHeight = '';
+      }
+
+      if (backend === 'mediapipe') {
+        modelLabelEl.textContent = 'Letter model';
+        modeHintEl.textContent = 'Upload an image or video, or use live camera. Videos are sampled (up to 300 frames) then decoded.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Predict from image or video';
+        hint.textContent = 'Click or drop an image or video here';
+      } else if (backend === 'image') {
+        modelLabelEl.textContent = 'Image model';
+        modeHintEl.textContent = 'Image models resize each frame to 64×64 RGB (no hand landmark step).';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Predict from image or video';
+        hint.textContent = 'Click or drop an image or video here';
+      } else if (backend === 'yolo') {
+        modelLabelEl.textContent = 'Letter model';
+        modeHintEl.textContent = 'YOLO classifies each sampled video frame or the full still image.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Predict from image or video';
+        hint.textContent = 'Click or drop an image or video here';
+      } else {
+        modelLabelEl.textContent = 'Word model';
+        modeHintEl.textContent = 'WLASL is sequence-based. Use Start camera and hold a sign for several frames.';
+        submitBtn.textContent = 'Single image not supported';
+        hint.textContent = 'WLASL word mode works from live camera, not a single still image';
+        submitBtn.disabled = true;
+      }
+      hideResult();
+      showStatus('', false);
     }
 
     function applyPrediction(data) {
       if (!data.ok) {
         showStatus(data.error || 'Request failed', true);
+        decoderSection.classList.add('hidden');
         return;
       }
-      if (!data.hand_detected) {
+
+      if (data.task === 'video') {
+        showStatus(data.message || 'Video processed.', false);
+      } else if (!data.hand_detected && !data.label) {
         showStatus(data.message || 'No hand detected.', false);
-        letterBox.textContent = '—';
-        confidenceEl.textContent = '';
-        topList.innerHTML = '';
-        resultEl.classList.remove('hidden');
-        return;
+      } else if (data.message) {
+        showStatus(data.message, false);
+      } else {
+        showStatus(liveTimer ? 'Live prediction updated.' : 'Done.', false);
       }
-      showStatus(liveTimer ? 'Live · hand detected' : 'Done.', false);
-      letterBox.textContent = (data.letter || '?').toUpperCase();
-      const c = data.confidence != null ? Math.round(data.confidence * 1000) / 10 : 0;
-      confidenceEl.textContent = 'Confidence: ' + c + '% · model: ' + (data.model || '');
+
+      const label = (data.label || '-').toUpperCase();
+      letterBox.textContent = label;
+      const c = data.confidence != null ? Math.round(data.confidence * 1000) / 10 : null;
+      const pieces = [];
+      if (c != null) pieces.push('Confidence: ' + c + '%');
+      if (data.model) pieces.push('model: ' + data.model);
+      if (data.backend) pieces.push('backend: ' + data.backend);
+      if (data.progress) pieces.push('frames: ' + data.progress.current + '/' + data.progress.required);
+      if (data.video) {
+        pieces.push(
+          'video: ' + data.video.frames_read + ' frames, ' + data.video.frames_sampled + ' sampled'
+        );
+      }
+      confidenceEl.textContent = pieces.join(' · ');
+
       topList.innerHTML = '';
       (data.top_predictions || []).forEach((row) => {
         const li = document.createElement('li');
         const pct = Math.round(row.confidence * 1000) / 10;
-        li.textContent = row.letter + ' — ' + pct + '%';
+        li.textContent = row.label + ' - ' + pct + '%';
         topList.appendChild(li);
       });
       resultEl.classList.remove('hidden');
+      applyDecoderPayload(data.decoder);
     }
 
-    async function predictBlob(blob) {
+    async function postResetWlasl() {
+      const fd = new FormData();
+      fd.append('client_id', clientId);
+      await fetch('/api/reset-wlasl', { method: 'POST', body: fd });
+    }
+
+    /**
+     * Flask must return JSON. HTML (413/500 pages, proxies, wrong port) breaks res.json().
+     */
+    async function parseApiJson(res) {
+      const text = await res.text();
+      // Some servers prepend a UTF-8 BOM; remove it before checking the first character.
+      const trimmed = text.replace(/^\uFEFF/, '').trimStart();
+      const looksLikeHtml =
+        trimmed.startsWith('<') &&
+        !trimmed.startsWith('{') &&
+        !trimmed.startsWith('[');
+      if (looksLikeHtml) {
+        throw new Error(
+          'Server returned HTML instead of JSON (HTTP ' + res.status + '). ' +
+          'Check the terminal running Flask. For video: file may be too large (raise MAX_VIDEO_UPLOAD_MB), ' +
+          'or the app crashed while processing — see the Python traceback.'
+        );
+      }
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch (e) {
+        throw new Error(
+          'Response was not valid JSON (HTTP ' + res.status + '): ' + (e && e.message ? e.message : String(e))
+        );
+      }
+    }
+
+    async function predictBlob(blob, streamMode) {
       const fd = new FormData();
       fd.append('image', blob, 'frame.jpg');
-      fd.append('model', document.getElementById('model').value);
-      const res = await fetch('/api/predict', { method: 'POST', body: fd });
-      return res.json();
+      fd.append('backend', backendEl.value);
+      fd.append('model', modelEl.value);
+      fd.append('client_id', clientId);
+      fd.append('stream_mode', streamMode || 'image');
+      const timeoutMs = (streamMode === 'live') ? LIVE_FETCH_TIMEOUT_MS : FETCH_TIMEOUT_MS;
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch('/api/predict', { method: 'POST', body: fd, signal: controller.signal });
+        return await parseApiJson(res);
+      } finally {
+        clearTimeout(t);
+      }
     }
 
-    let liveRequestBusy = false;
+    function formatLiveFetchError(err) {
+      if (err && err.name === 'AbortError') {
+        return 'Request timed out (server too slow or overloaded). Try PyTorch image/YOLO, or close other apps.';
+      }
+      const msg = (err && err.message) ? err.message : String(err);
+      if (msg === 'Failed to fetch' || msg.includes('NetworkError')) {
+        return 'Cannot reach the server. Start the UI from the repo: python part1_letter_classifier/ui/app.py '
+          + 'and open the same host/port (e.g. http://127.0.0.1:5000). '
+          + 'If you use another PC or phone, set HOST=0.0.0.0 before starting Flask.';
+      }
+      return msg;
+    }
+
     async function tickLive() {
       if (!liveStream || !liveVideo.videoWidth || liveRequestBusy) return;
       liveRequestBusy = true;
@@ -156,10 +541,10 @@
         ctx.drawImage(liveVideo, 0, 0, w, h);
         const blob = await new Promise((resolve) => snapCanvas.toBlob(resolve, 'image/jpeg', 0.88));
         if (!blob) return;
-        const data = await predictBlob(blob);
+        const data = await predictBlob(blob, 'live');
         applyPrediction(data);
       } catch (err) {
-        showStatus('Live error: ' + err, true);
+        showStatus('Live error: ' + formatLiveFetchError(err), true);
       } finally {
         liveRequestBusy = false;
       }
@@ -168,6 +553,7 @@
     btnLiveStart.addEventListener('click', async () => {
       if (liveStream) return;
       try {
+        await postResetWlasl();
         liveStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
           audio: false,
@@ -176,7 +562,7 @@
         await liveVideo.play();
         btnLiveStart.disabled = true;
         btnLiveStop.disabled = false;
-        showStatus('Live mode on — showing your camera…', false);
+        showStatus('Live mode on.', false);
         resultEl.classList.remove('hidden');
         liveTimer = setInterval(tickLive, LIVE_INTERVAL_MS);
       } catch (err) {
@@ -184,7 +570,7 @@
       }
     });
 
-    btnLiveStop.addEventListener('click', () => {
+    btnLiveStop.addEventListener('click', async () => {
       if (liveTimer) {
         clearInterval(liveTimer);
         liveTimer = null;
@@ -196,29 +582,90 @@
       liveVideo.srcObject = null;
       btnLiveStart.disabled = false;
       btnLiveStop.disabled = true;
+      await postResetWlasl();
       showStatus('Live mode off.', false);
     });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (uploadRequestBusy) return;
       hideResult();
-      const fd = new FormData(form);
-      if (!fileInput.files.length) {
-        showStatus('Choose an image first.', true);
+      if (backendEl.value === 'wlasl') {
+        showStatus('WLASL word mode needs live camera input. Click Start camera instead.', true);
         return;
       }
+      if (backendEl.value === 'image' && !['cnn', 'mobilenet', 'resnet', 'vgg'].includes(modelEl.value)) {
+        showStatus('Choose an image model (CNN, MobileNet, ResNet, or VGG).', true);
+        return;
+      }
+      const file = fileInput.files[0];
+      if (!file) {
+        showStatus('Choose an image or video first.', true);
+        return;
+      }
+      uploadRequestBusy = true;
+      const videoMode = isVideoFile(file);
+      const fd = new FormData();
+      fd.append('backend', backendEl.value);
+      fd.append('model', modelEl.value);
+      if (videoMode) {
+        fd.append('video', file, file.name);
+      } else {
+        fd.append('image', file, file.name);
+      }
       submitBtn.disabled = true;
-      showStatus('Running prediction…', false);
+      showStatus(videoMode ? 'Processing video (may take a while)...' : 'Running prediction...', false);
+      const controller = new AbortController();
+      const timeoutMs = videoMode ? VIDEO_FETCH_TIMEOUT_MS : FETCH_TIMEOUT_MS;
+      const t = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await fetch('/api/predict', { method: 'POST', body: fd });
-        const data = await res.json();
+        const url = videoMode ? '/api/predict-video' : '/api/predict';
+        const res = await fetch(url, { method: 'POST', body: fd, signal: controller.signal });
+        const data = await parseApiJson(res);
         applyPrediction(data);
       } catch (err) {
-        showStatus('Network error: ' + err, true);
+        const msg =
+          err && err.name === 'AbortError'
+            ? 'timed out'
+            : (err && err.message ? err.message : String(err));
+        showStatus('Network error: ' + msg, true);
       } finally {
+        clearTimeout(t);
+        uploadRequestBusy = false;
         submitBtn.disabled = false;
       }
     });
+
+    syncDecoderToggleUI();
+    syncBackendUI();
+
+    (function checkServerReachable() {
+      const banner = document.getElementById('serverBanner');
+      if (!banner) return;
+      if (window.location.protocol === 'file:') {
+        banner.hidden = false;
+        banner.innerHTML =
+          '<strong>Open this app through Flask, not as a file.</strong> ' +
+          'From the repo root run: <code>python part1_letter_classifier/ui/app.py</code> ' +
+          'then visit <strong>http://127.0.0.1:5000</strong> in your browser (live camera needs this).';
+        return;
+      }
+      const c = new AbortController();
+      const t = setTimeout(function () { c.abort(); }, 4000);
+      fetch('/api/health', { signal: c.signal })
+        .then(function (r) {
+          clearTimeout(t);
+          if (!r.ok) throw new Error('bad status');
+        })
+        .catch(function () {
+          clearTimeout(t);
+          banner.hidden = false;
+          banner.innerHTML =
+            '<strong>Flask server is not responding.</strong> In a terminal, from the repo root run ' +
+            '<code>python part1_letter_classifier/ui/app.py</code> and leave it running, then reload this page. ' +
+            'Remote devices: set <code>HOST=0.0.0.0</code> and open <code>http://&lt;this-PC-IP&gt;:5000</code>.';
+        });
+    })();
   </script>
 </body>
 </html>
