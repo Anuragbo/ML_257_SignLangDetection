@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, max-age=0">
   <title>ASL demo UI</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=8">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=18">
 </head>
 <body>
   <div class="page">
@@ -13,10 +13,15 @@
     <header class="header">
       <h1>ASL frontend</h1>
       <p class="sub">One UI for <strong>MediaPipe letters</strong>, <strong>PyTorch image letters</strong> (CNN, MobileNet, ResNet, VGG), <strong>YOLO letters</strong>, and <strong>WLASL word recognition</strong>. Upload a <strong>still image or video</strong> for letter models (videos are sampled server-side); use <strong>live camera</strong> for WLASL or for letters — letter streams also run the <strong>Part 3 decoder</strong> (smoothed letters → words → sentence).</p>
+      <p class="sub"><strong>Gesture chart is built into this UI.</strong> Use the hand-sign image below for quick demo prompts.</p>
     </header>
 
     <main class="card">
       <form id="form" class="form">
+        <p class="callout">
+          <strong>Fingerspelling dataset classes:</strong>
+          Use the live chart near the camera section for demo prompts.
+        </p>
         <p class="callout" id="backendTip">
           <strong>How to see every model:</strong> choose <strong>Backend</strong> first — the <strong>Model</strong> menu below updates. For CNN, MobileNet, ResNet, or VGG, pick <strong>PyTorch image</strong>, then open <strong>Model</strong> (four options).
         </p>
@@ -40,9 +45,48 @@
 
         <div class="live-block">
           <span class="label">Live video</span>
-          <div class="video-wrap">
-            <video id="liveVideo" playsinline muted autoplay></video>
+          <div class="live-layout">
+            <div class="live-main">
+              <div class="video-wrap">
+                <video id="liveVideo" playsinline muted autoplay></video>
+                <div class="video-prediction-overlay" aria-live="polite">
+                  <div class="video-letter-overlay" id="videoLetterOverlay">-</div>
+                  <div class="video-word-overlay" id="videoWordOverlay">Word: -</div>
+                </div>
+              </div>
+              <details class="live-chart-dropdown" aria-label="Fingerspelling gesture reference">
+                <summary>Show gesture chart</summary>
+                <aside class="live-sidebar">
+                  <p class="label live-sidebar-title">Gesture chart</p>
+                  <a class="chart-image-link" href="https://upload.wikimedia.org/wikipedia/commons/c/c8/Asl_alphabet_gallaudet.svg" target="_blank" rel="noopener noreferrer">
+                    <img
+                      class="chart-image"
+                      src="https://upload.wikimedia.org/wikipedia/commons/c/c8/Asl_alphabet_gallaudet.svg"
+                      alt="ASL fingerspelling chart with hand gestures for letters A to Z"
+                      loading="lazy"
+                      referrerpolicy="no-referrer"
+                    >
+                  </a>
+                  <p class="sub chart-practice">
+                    Demo order: <code>A</code> → <code>B</code> → <code>C</code> → <code>L</code> → <code>V</code> → <code>Y</code> → <code>1</code> → <code>2</code> → <code>5</code>.
+                  </p>
+                </aside>
+              </details>
+              <section id="result" class="result result-overlay">
+                <div class="letter-box" id="letterBox">-</div>
+                <p class="conf" id="confidence">Waiting for prediction...</p>
+                <h3 class="list-title">Top predictions</h3>
+                <ol id="topList" class="top-list"><li>—</li></ol>
+              </section>
+            </div>
           </div>
+          <label class="field" style="margin-top: 0.25rem;">
+            <span class="label">Orientation</span>
+            <span style="display:flex; align-items:center; gap:0.5rem; font-size:0.9rem; color:#cbd5e1;">
+              <input type="checkbox" id="mirrorToServer" checked>
+              Mirror to match training (horizontal flip)
+            </span>
+          </label>
           <p class="live-hint">Browser captures the camera locally; frames are posted to the Flask server. WLASL uses a rolling 30-frame buffer, so it needs a few seconds before the first word prediction appears. Letter backends (MediaPipe, PyTorch image, YOLO) buffer frames for the Part 3 text decoder — spell slowly with short pauses between words.</p>
           <div class="live-actions">
             <button type="button" class="btn btn-live" id="btnLiveStart">Start camera</button>
@@ -60,13 +104,6 @@
       </form>
 
       <div id="status" class="status" aria-live="polite"></div>
-
-      <section id="result" class="result hidden">
-        <div class="letter-box" id="letterBox">-</div>
-        <p class="conf" id="confidence"></p>
-        <h3 class="list-title">Top predictions</h3>
-        <ol id="topList" class="top-list"></ol>
-      </section>
 
       <section id="decoderSection" class="decoder hidden" aria-live="polite">
         <div class="decoder-header-row">
@@ -151,6 +188,8 @@
     const statusEl = document.getElementById('status');
     const resultEl = document.getElementById('result');
     const letterBox = document.getElementById('letterBox');
+    const videoLetterOverlay = document.getElementById('videoLetterOverlay');
+    const videoWordOverlay = document.getElementById('videoWordOverlay');
     const confidenceEl = document.getElementById('confidence');
     const topList = document.getElementById('topList');
     const decoderSection = document.getElementById('decoderSection');
@@ -172,6 +211,7 @@
     const liveVideo = document.getElementById('liveVideo');
     const btnLiveStart = document.getElementById('btnLiveStart');
     const btnLiveStop = document.getElementById('btnLiveStop');
+    const mirrorToServerEl = document.getElementById('mirrorToServer');
     const snapCanvas = document.createElement('canvas');
     const clientId = (() => {
       const key = 'asl-demo-client-id';
@@ -229,8 +269,28 @@
     }
 
     function hideResult() {
-      resultEl.classList.add('hidden');
+      // Keep the result panel visible as a stable "status stage".
+      letterBox.textContent = '-';
+      videoLetterOverlay.textContent = '-';
+      videoWordOverlay.textContent = 'Word: -';
+      confidenceEl.textContent = 'Waiting for prediction...';
+      topList.innerHTML = '<li>—</li>';
       decoderSection.classList.add('hidden');
+    }
+
+    function getOverlayWord(data) {
+      if (!data) return '-';
+      if (data.backend === 'wlasl' && data.label) return String(data.label).toLowerCase();
+      const dec = data.decoder || null;
+      if (dec && Array.isArray(dec.beam_top) && dec.beam_top.length && Array.isArray(dec.beam_top[0].words)) {
+        const firstWord = dec.beam_top[0].words[0];
+        if (firstWord) return String(firstWord).toLowerCase();
+      }
+      if (dec && dec.sentence) {
+        const firstWord = String(dec.sentence).trim().split(/\s+/)[0];
+        if (firstWord) return firstWord.toLowerCase();
+      }
+      return '-';
     }
 
     function syncDecoderToggleUI() {
@@ -441,6 +501,12 @@
 
       const label = (data.label || '-').toUpperCase();
       letterBox.textContent = label;
+      videoLetterOverlay.textContent = label;
+      videoWordOverlay.textContent = 'Word: ' + getOverlayWord(data);
+      letterBox.classList.remove('pop');
+      // Restart the subtle pulse each time a new prediction arrives.
+      void letterBox.offsetWidth;
+      letterBox.classList.add('pop');
       const c = data.confidence != null ? Math.round(data.confidence * 1000) / 10 : null;
       const pieces = [];
       if (c != null) pieces.push('Confidence: ' + c + '%');
@@ -505,6 +571,7 @@
       fd.append('model', modelEl.value);
       fd.append('client_id', clientId);
       fd.append('stream_mode', streamMode || 'image');
+      fd.append('mirror', mirrorToServerEl && mirrorToServerEl.checked ? '1' : '0');
       const timeoutMs = (streamMode === 'live') ? LIVE_FETCH_TIMEOUT_MS : FETCH_TIMEOUT_MS;
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -608,6 +675,7 @@
       const fd = new FormData();
       fd.append('backend', backendEl.value);
       fd.append('model', modelEl.value);
+      fd.append('mirror', mirrorToServerEl && mirrorToServerEl.checked ? '1' : '0');
       if (videoMode) {
         fd.append('video', file, file.name);
       } else {
