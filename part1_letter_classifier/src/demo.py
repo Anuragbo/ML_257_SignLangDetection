@@ -163,6 +163,46 @@ def draw_instructions(frame):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS["gray"], 1)
 
 
+def _mirror_landmark_features(feats: np.ndarray) -> np.ndarray:
+    """Mirror landmark features across x (post wrist-centering)."""
+    v = np.asarray(feats, dtype=np.float32).reshape(21, 3).copy()
+    v[:, 0] *= -1.0
+    return v.reshape(-1)
+
+def _flip_landmark_z(feats: np.ndarray) -> np.ndarray:
+    v = np.asarray(feats, dtype=np.float32).reshape(21, 3).copy()
+    v[:, 2] *= -1.0
+    return v.reshape(-1)
+
+
+def _flip_landmark_xz(feats: np.ndarray) -> np.ndarray:
+    v = np.asarray(feats, dtype=np.float32).reshape(21, 3).copy()
+    v[:, 0] *= -1.0
+    v[:, 2] *= -1.0
+    return v.reshape(-1)
+
+
+def _best_proba_over_variants(model, feats: np.ndarray, extra_variants: list[np.ndarray] | None = None) -> np.ndarray:
+    variants = [
+        feats,
+        _mirror_landmark_features(feats),
+        _flip_landmark_z(feats),
+        _flip_landmark_xz(feats),
+    ]
+    if extra_variants:
+        variants.extend(extra_variants)
+    best = None
+    best_score = -1.0
+    for v in variants:
+        p = model.predict_proba(np.asarray(v, dtype=np.float32).reshape(1, -1))[0]
+        s = float(np.max(p))
+        if s > best_score:
+            best_score = s
+            best = p
+    assert best is not None
+    return best
+
+
 # ── Main loop ────────────────────────────────────────────────────────────────
 
 def load_model(model_name):
@@ -242,7 +282,12 @@ def main():
 
         if features is not None:
             features_2d = features.reshape(1, -1)
-            proba = model.predict_proba(features_2d)[0]
+            # Try original + mirrored features, plus MediaPipe features extracted from a
+            # horizontally flipped frame (helps left-hand cases without retraining).
+            flipped = cv2.flip(frame, 1)
+            feats_flip = extract_landmarks(flipped, detector)
+            extra = [feats_flip] if feats_flip is not None else None
+            proba = _best_proba_over_variants(model, features, extra_variants=extra)
             pred_idx = np.argmax(proba)
             confidence = proba[pred_idx]
 

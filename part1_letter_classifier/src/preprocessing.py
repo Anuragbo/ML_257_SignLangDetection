@@ -43,14 +43,14 @@ def ensure_model():
 
 # ── Landmark extraction ───────────────────────────────────────────────────────
 
-def make_detector():
+def make_detector(num_hands: int = 1):
     base_options = mp_python.BaseOptions(
         model_asset_path=MODEL_PATH,
         delegate=mp_python.BaseOptions.Delegate.CPU,
     )
     options = mp_vision.HandLandmarkerOptions(
         base_options=base_options,
-        num_hands=1,
+        num_hands=num_hands,
         min_hand_detection_confidence=0.1,
         min_hand_presence_confidence=0.1,
         min_tracking_confidence=0.1,
@@ -67,28 +67,72 @@ def pad_image(image_bgr, pad_ratio=0.3):
                                cv2.BORDER_CONSTANT, value=(255, 255, 255))
 
 
-def extract_landmarks(image_bgr, detector):
+def _hand_label(result, idx: int) -> str | None:
+    """
+    Best-effort handedness label ("Left"/"Right") for hand idx.
+    MediaPipe Tasks returns a per-hand list of classifications under result.handedness.
+    """
+    try:
+        handed = getattr(result, "handedness", None)
+        if not handed:
+            return None
+        # handed[idx] is a list of Classification objects; take the top one.
+        top = handed[idx][0]
+        return getattr(top, "category_name", None) or getattr(top, "display_name", None)
+    except Exception:
+        return None
+
+
+def _pick_hand_index(result, prefer: str = "any") -> int:
+    prefer = (prefer or "any").lower().strip()
+    n = len(result.hand_landmarks or [])
+    if n <= 1 or prefer == "any":
+        return 0
+    prefer_norm = "left" if prefer.startswith("l") else "right"
+    for i in range(n):
+        lab = (_hand_label(result, i) or "").lower()
+        if prefer_norm in lab:
+            return i
+    return 0
+
+
+def extract_landmarks(
+    image_bgr,
+    detector,
+    *,
+    hand: str = "any",
+    canonicalize_left_to_right: bool = True,
+):
     """
     Run MediaPipe Hands on a single BGR image.
     Tries the original image first, then a padded version for tight crops.
     Returns a (63,) float32 array of normalized (x,y,z) landmarks,
     or None if no hand is detected.
     """
+    result = None
     for img in [image_bgr, pad_image(image_bgr)]:
         image_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         mp_image  = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
-        result    = detector.detect(mp_image)
+        result = detector.detect(mp_image)
         if result.hand_landmarks:
             break
 
-    if not result.hand_landmarks:
+    if result is None or not result.hand_landmarks:
         return None
 
-    landmarks = result.hand_landmarks[0]   # list of 21 NormalizedLandmark
+    hand_idx = _pick_hand_index(result, prefer=hand)
+    landmarks = result.hand_landmarks[hand_idx]   # list of 21 NormalizedLandmark
     coords = np.array([[lm.x, lm.y, lm.z] for lm in landmarks], dtype=np.float32)  # (21, 3)
 
     # Normalize: translate so wrist (landmark 0) is at origin
     coords -= coords[0]
+
+    # Canonicalize handedness: mirror left-hand x to match right-hand geometry.
+    # This lets one model handle both hands without retraining.
+    if canonicalize_left_to_right:
+        lab = (_hand_label(result, hand_idx) or "").lower()
+        if "left" in lab:
+            coords[:, 0] *= -1.0
 
     # Scale: divide by wrist-to-middle-finger-MCP distance (landmark 9)
     # Makes features invariant to hand size and camera distance

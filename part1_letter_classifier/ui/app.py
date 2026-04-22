@@ -150,11 +150,79 @@ def _load_image(image_bytes: bytes):
     arr = np.frombuffer(image_bytes, dtype=np.uint8)
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
+def _parse_bool(s: str | None, default: bool = False) -> bool:
+    if s is None:
+        return default
+    v = str(s).strip().lower()
+    if v in ("1", "true", "t", "yes", "y", "on"):
+        return True
+    if v in ("0", "false", "f", "no", "n", "off", ""):
+        return False
+    return default
 
-def predict_mediapipe_from_bytes(image_bytes: bytes, model_name: str) -> dict:
+
+def _maybe_mirror_bgr(bgr: np.ndarray, mirror: bool) -> np.ndarray:
+    return cv2.flip(bgr, 1) if mirror else bgr
+
+
+def _mirror_landmark_features(feats: np.ndarray) -> np.ndarray:
+    """
+    Mirror landmark features across the x-axis (post wrist-centering).
+    feats is a flattened (21,3) vector: [x0,y0,z0,x1,y1,z1,...].
+    """
+    v = np.asarray(feats, dtype=np.float32).reshape(21, 3).copy()
+    v[:, 0] *= -1.0
+    return v.reshape(-1)
+
+def _flip_landmark_z(feats: np.ndarray) -> np.ndarray:
+    """Flip landmark depth (z). Helps with palm/back orientation differences."""
+    v = np.asarray(feats, dtype=np.float32).reshape(21, 3).copy()
+    v[:, 2] *= -1.0
+    return v.reshape(-1)
+
+
+def _flip_landmark_xz(feats: np.ndarray) -> np.ndarray:
+    """Flip both x and z (approx 180° rotation around y-axis in camera coords)."""
+    v = np.asarray(feats, dtype=np.float32).reshape(21, 3).copy()
+    v[:, 0] *= -1.0
+    v[:, 2] *= -1.0
+    return v.reshape(-1)
+
+
+def _best_proba_over_variants(model, feats: np.ndarray, extra_variants: list[np.ndarray] | None = None) -> np.ndarray:
+    """
+    Evaluate predict_proba over multiple feature variants and return the one with
+    the highest top-1 confidence.
+    """
+    # Inference-time augmentation over landmark symmetries:
+    # - x flip handles left-vs-right
+    # - z flip handles palm-vs-back (depth sign) differences
+    # - x+z approximates a 180° turn around the vertical axis
+    variants = [
+        feats,
+        _mirror_landmark_features(feats),
+        _flip_landmark_z(feats),
+        _flip_landmark_xz(feats),
+    ]
+    if extra_variants:
+        variants.extend(extra_variants)
+    best = None
+    best_score = -1.0
+    for v in variants:
+        p = model.predict_proba(np.asarray(v, dtype=np.float32).reshape(1, -1))[0]
+        s = float(np.max(p))
+        if s > best_score:
+            best_score = s
+            best = p
+    assert best is not None
+    return best
+
+
+def predict_mediapipe_from_bytes(image_bytes: bytes, model_name: str, *, mirror: bool = False) -> dict:
     bgr = _load_image(image_bytes)
     if bgr is None:
         return {"ok": False, "error": "Could not read the image. Use JPG, PNG, or WebP."}
+    bgr = _maybe_mirror_bgr(bgr, mirror)
 
     detector = get_detector()
     feats = extract_landmarks(bgr, detector)
@@ -170,7 +238,15 @@ def predict_mediapipe_from_bytes(image_bytes: bytes, model_name: str) -> dict:
         }
 
     model = get_model(model_name)
-    proba = model.predict_proba(feats.reshape(1, -1))[0]
+
+    # Extra-robust left-hand support:
+    # - Also run MediaPipe on a horizontally flipped image, then score both that feature
+    #   vector and its mirror. This avoids relying on MediaPipe handedness and helps when
+    #   landmark quality differs between left/right appearances.
+    flipped = cv2.flip(bgr, 1)
+    feats_flip = extract_landmarks(flipped, detector)
+    extra = [feats_flip] if feats_flip is not None else None
+    proba = _best_proba_over_variants(model, feats, extra_variants=extra)
     label_map = get_label_map()
     order = np.argsort(proba)[::-1]
     top = [{"label": label_map[int(i)], "confidence": float(proba[i])} for i in order[:8]]
@@ -229,13 +305,14 @@ def _get_letter_image_model(model_name: str) -> torch.nn.Module:
     return _letter_image_models[key]
 
 
-def predict_image_letter_from_bytes(image_bytes: bytes, model_name: str) -> dict:
+def predict_image_letter_from_bytes(image_bytes: bytes, model_name: str, *, mirror: bool = False) -> dict:
     """Full-frame 64×64 RGB classifier; no MediaPipe hand crop."""
     from train import IMG_SIZE, predict_torch_images_proba
 
     bgr = _load_image(image_bytes)
     if bgr is None:
         return {"ok": False, "error": "Could not read the image. Use JPG, PNG, or WebP."}
+    bgr = _maybe_mirror_bgr(bgr, mirror)
 
     key = model_name.lower().strip()
     rgb = cv2.cvtColor(cv2.resize(bgr, (IMG_SIZE, IMG_SIZE)), cv2.COLOR_BGR2RGB).astype(
@@ -273,10 +350,11 @@ def predict_image_letter_from_bytes(image_bytes: bytes, model_name: str) -> dict
     }
 
 
-def predict_yolo_from_bytes(image_bytes: bytes, imgsz: int | None = None) -> dict:
+def predict_yolo_from_bytes(image_bytes: bytes, imgsz: int | None = None, *, mirror: bool = False) -> dict:
     bgr = _load_image(image_bytes)
     if bgr is None:
         return {"ok": False, "error": "Could not read the image. Use JPG, PNG, or WebP."}
+    bgr = _maybe_mirror_bgr(bgr, mirror)
 
     model = get_yolo_model()
     kwargs: dict[str, object] = {"verbose": False}
@@ -491,6 +569,8 @@ def predict_video_from_bytes(
     original_filename: str,
     backend: str,
     model_name: str,
+    *,
+    mirror: bool = False,
 ) -> dict:
     """
     Sample frames from an uploaded video, run letter classification on each sample,
@@ -539,6 +619,8 @@ def predict_video_from_bytes(
             if not ret:
                 break
             if total_read % step == 0:
+                if mirror:
+                    bgr = cv2.flip(bgr, 1)
                 jpeg = _bgr_to_jpeg_bytes(bgr)
                 if jpeg:
                     one = _predict_letter_jpeg_bytes(jpeg, backend, model_name)
@@ -602,10 +684,11 @@ def predict_video_from_bytes(
                 pass
 
 
-def predict_wlasl_live(image_bytes: bytes, model_name: str, client_id: str) -> dict:
+def predict_wlasl_live(image_bytes: bytes, model_name: str, client_id: str, *, mirror: bool = False) -> dict:
     bgr = _load_image(image_bytes)
     if bgr is None:
         return {"ok": False, "error": "Could not read the image. Use JPG, PNG, or WebP."}
+    bgr = _maybe_mirror_bgr(bgr, mirror)
 
     module = load_wlasl_module()
     detector = get_wlasl_detector()
@@ -702,6 +785,7 @@ def api_predict():
     model_name = request.form.get("model", "mlp").lower().strip()
     client_id = request.form.get("client_id", "").strip() or request.remote_addr or "anonymous"
     stream_mode = request.form.get("stream_mode", "image").lower().strip()
+    mirror = _parse_bool(request.form.get("mirror"), default=False)
 
     data = f.read()
     if not data:
@@ -711,16 +795,16 @@ def api_predict():
         if backend == "mediapipe":
             if model_name not in ("svm", "rf", "mlp"):
                 return jsonify({"ok": False, "error": "MediaPipe model must be svm, rf, or mlp."}), 400
-            result = predict_mediapipe_from_bytes(data, model_name)
+            result = predict_mediapipe_from_bytes(data, model_name, mirror=mirror)
         elif backend == "image":
             if model_name not in ("cnn", "mobilenet", "resnet", "vgg"):
                 return jsonify({
                     "ok": False,
                     "error": "Image backend model must be cnn, mobilenet, resnet, or vgg.",
                 }), 400
-            result = predict_image_letter_from_bytes(data, model_name)
+            result = predict_image_letter_from_bytes(data, model_name, mirror=mirror)
         elif backend == "yolo":
-            result = predict_yolo_from_bytes(data)
+            result = predict_yolo_from_bytes(data, mirror=mirror)
         elif backend == "wlasl":
             if model_name not in ("bilstm", "transformer"):
                 return jsonify({"ok": False, "error": "WLASL model must be bilstm or transformer."}), 400
@@ -737,7 +821,7 @@ def api_predict():
                     "message": "The WLASL word model needs a live sequence of frames. Use Start camera instead of single-image upload.",
                 }
             else:
-                result = predict_wlasl_live(data, model_name, client_id)
+                result = predict_wlasl_live(data, model_name, client_id, mirror=mirror)
         else:
             return jsonify({"ok": False, "error": "backend must be mediapipe, image, yolo, or wlasl."}), 400
     except FileNotFoundError as e:
@@ -774,6 +858,7 @@ def api_predict_video():
 
     backend = request.form.get("backend", "mediapipe").lower().strip()
     model_name = request.form.get("model", "mlp").lower().strip()
+    mirror = _parse_bool(request.form.get("mirror"), default=False)
 
     if backend == "wlasl":
         return jsonify({
@@ -806,7 +891,7 @@ def api_predict_video():
         elif backend != "yolo":
             return jsonify({"ok": False, "error": "backend must be mediapipe, image, or yolo for video."}), 400
 
-        result = predict_video_from_bytes(data, f.filename, backend, model_name)
+        result = predict_video_from_bytes(data, f.filename, backend, model_name, mirror=mirror)
     except FileNotFoundError as e:
         return jsonify({"ok": False, "error": str(e)}), 503
     except Exception as e:
