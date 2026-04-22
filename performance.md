@@ -20,6 +20,17 @@ Offline evaluation metrics for **Part 1** (ASL letter classifiers) and **Part 2*
 
 **Outputs:** `part1_letter_classifier/results/confusion_*.png`, `model_comparison.png`.
 
+#### Chart — MediaPipe model accuracy
+
+```text
+Scale: 0.00 -> 1.00 (40 blocks)
+🔵 Random Forest  0.9066 |████████████████████████████████████░░░░|
+🟢 SVM            0.9011 |████████████████████████████████████░░░░|
+🟠 MLP            0.8242 |█████████████████████████████████░░░░░░░|
+```
+**Key:** 🔵 Random Forest, 🟢 SVM, 🟠 MLP.  
+**Values:** Random Forest `0.9066`, SVM `0.9011`, MLP `0.8242`.
+
 ### PyTorch image models (test split: `X_test_img.npy` / `y_test_img.npy`)
 
 | Model | Accuracy | Macro P | Macro R | Macro F1 |
@@ -37,6 +48,18 @@ Offline evaluation metrics for **Part 1** (ASL letter classifiers) and **Part 2*
 
 **Outputs:** `confusion_cnn.png`, `confusion_mobilenetv2.png`, `confusion_resnet-18.png`, `confusion_vgg-11-bn.png`, `model_comparison.png`.
 
+#### Chart — PyTorch image model accuracy
+
+```text
+Scale: 0.00 -> 1.00 (40 blocks)
+🔵 ResNet-18      0.9894 |████████████████████████████████████████|
+🟢 MobileNetV2    0.9868 |███████████████████████████████████████░|
+🟠 VGG-11-BN      0.9815 |███████████████████████████████████████░|
+🔴 CNN            0.9392 |██████████████████████████████████████░░|
+```
+**Key:** 🔵 ResNet-18, 🟢 MobileNetV2, 🟠 VGG-11-BN, 🔴 CNN.  
+**Values:** ResNet-18 `0.9894`, MobileNetV2 `0.9868`, VGG-11-BN `0.9815`, CNN `0.9392`.
+
 ### YOLO classification (Ultralytics — validation split `data/yolo_cls_dataset/val/`)
 
 | Samples | Accuracy | Macro precision | Macro recall | Macro F1 |
@@ -44,6 +67,16 @@ Offline evaluation metrics for **Part 1** (ASL letter classifiers) and **Part 2*
 | 503 | 0.9622 | 0.9667 | 0.9623 | 0.9617 |
 
 **Also saved in:** `part1_letter_classifier/results/yolo_cls_metrics.txt`, `yolo_cls_confusion.png`.
+
+#### Chart — YOLO vs best image model
+
+```text
+Scale: 0.00 -> 1.00 (40 blocks)
+🟦 YOLO           0.9622 |███████████████████████████████████████░|
+🔵 ResNet-18      0.9894 |████████████████████████████████████████|
+```
+**Key:** 🟦 YOLO, 🔵 ResNet-18.  
+**Values:** YOLO `0.9622`, ResNet-18 `0.9894`.
 
 ### Comparing Part 1 numbers
 
@@ -63,6 +96,19 @@ Test set: **61** sequences (`part2_word_recognizer/data/sequences` test split).
 | BiLSTM | 24.6% | 59.0% | 28.0% (epoch 42) |
 
 **Outputs:** `part2_word_recognizer/results/confusion_bilstm.png`, `confusion_transformer.png`, `per_class_accuracy.csv`, `model_comparison.png`.
+
+#### Chart — Part 2 word recognition
+
+```text
+Scale: 0.00 -> 1.00 (40 blocks)
+🟠 Transformer top-1  0.344 |██████████████░░░░░░░░░░░░░░░░░░░░░░░░|
+🟠 BiLSTM top-1       0.246 |██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+🟦 Transformer top-5  0.705 |████████████████████████████░░░░░░░░░░░|
+🟦 BiLSTM top-5       0.590 |████████████████████████░░░░░░░░░░░░░░░|
+```
+**Key:** 🟠 Top-1, 🟦 Top-5.  
+**Model key:** Transformer first row pair, BiLSTM second row pair.  
+**Values:** Transformer top-1 `0.344`, top-5 `0.705`; BiLSTM top-1 `0.246`, top-5 `0.590`.
 
 ---
 
