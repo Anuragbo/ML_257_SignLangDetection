@@ -5,144 +5,217 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, max-age=0">
   <title>ASL demo UI</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=18">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=29">
+  <style id="layout-lock-v24">
+    #form .workbench-grid {
+      display: flex !important;
+      flex-direction: row !important;
+      gap: 20px !important;
+      align-items: stretch !important;
+      width: 100% !important;
+    }
+    #form .workbench-grid > .live-block {
+      flex: 2 1 0 !important;
+      min-width: 0 !important;
+      width: auto !important;
+      max-width: none !important;
+      position: relative !important;
+      z-index: 1 !important;
+    }
+    #form .workbench-grid > #aslRefPanel.smart-sidebar {
+      flex: 1 1 0 !important;
+      min-width: 280px !important;
+      width: auto !important;
+      max-width: none !important;
+      max-height: 80vh !important;
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      position: relative !important;
+      inset: auto !important;
+      z-index: 2 !important;
+    }
+    #form .live-layout,
+    #form .live-main {
+      display: block !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      position: static !important;
+    }
+    #form .video-wrap { position: relative !important; width: 100% !important; }
+    .video-word-overlay-wrap {
+      position: absolute !important;
+      left: 50% !important;
+      bottom: 0.85rem !important;
+      transform: translateX(-50%) !important;
+      z-index: 6 !important;
+    }
+    .video-letter-overlay-wrap {
+      position: absolute !important;
+      right: 0.85rem !important;
+      bottom: 0.85rem !important;
+      z-index: 7 !important;
+    }
+    .video-shortcuts-hint {
+      position: absolute !important;
+      left: 50% !important;
+      bottom: 0 !important;
+      transform: translateX(-50%) !important;
+      z-index: 5 !important;
+    }
+    .video-shortcuts-hint.under-video {
+      position: static !important;
+      left: auto !important;
+      bottom: auto !important;
+      transform: none !important;
+      margin-top: 0.45rem;
+      justify-content: center;
+      width: fit-content;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .floating-reference-panel,
+    .reference-toggle-btn,
+    .video-prediction-overlay,
+    .video-letter-overlay,
+    .video-word-overlay,
+    .live-summary-bar,
+    .live-actions {
+      display: none !important;
+    }
+  </style>
 </head>
 <body>
   <div class="page">
     <div id="serverBanner" class="server-banner" role="alert" hidden></div>
     <header class="header">
-      <h1>ASL frontend</h1>
-      <p class="sub">One UI for <strong>MediaPipe letters</strong>, <strong>PyTorch image letters</strong> (CNN, MobileNet, ResNet, VGG), <strong>YOLO letters</strong>, and <strong>WLASL word recognition</strong>. Upload a <strong>still image or video</strong> for letter models (videos are sampled server-side); use <strong>live camera</strong> for WLASL or for letters — letter streams also run the <strong>Part 3 decoder</strong> (smoothed letters → words → sentence).</p>
-      <p class="sub"><strong>Gesture chart is built into this UI.</strong> Use the hand-sign image below for quick demo prompts.</p>
+      <h1>Real-Time ASL Character-to-Text Converter</h1>
     </header>
 
     <main class="card">
       <form id="form" class="form">
-        <p class="callout">
-          <strong>Fingerspelling dataset classes:</strong>
-          Use the live chart near the camera section for demo prompts.
-        </p>
-        <p class="callout" id="backendTip">
-          <strong>How to see every model:</strong> choose <strong>Backend</strong> first — the <strong>Model</strong> menu below updates. For CNN, MobileNet, ResNet, or VGG, pick <strong>PyTorch image</strong>, then open <strong>Model</strong> (four options).
-        </p>
-        <label class="field">
-          <span class="label">Backend</span>
-          <select name="backend" id="backend">
-            <option value="mediapipe" selected>MediaPipe letter classifier</option>
-            <option value="image">PyTorch image (CNN / MobileNet / ResNet / VGG)</option>
-            <option value="yolo">YOLO letter classifier</option>
-            <option value="wlasl">WLASL word recognizer</option>
-          </select>
-        </label>
+        <div class="settings-thin-bar">
+          <label class="field settings-field">
+            <span class="label">Backend</span>
+            <select name="backend" id="backend">
+              <option value="mediapipe" selected>MediaPipe letter classifier</option>
+              <option value="image">PyTorch image (CNN / MobileNet / ResNet / VGG)</option>
+              <option value="yolo">YOLO letter classifier</option>
+              <option value="wlasl">WLASL word recognizer</option>
+            </select>
+          </label>
 
-        <label class="field">
-          <span class="label" id="modelLabel">Model</span>
-          <select name="model" id="model" size="1"></select>
-        </label>
+          <label class="field settings-field">
+            <span class="label" id="modelLabel">Letter Model</span>
+            <select name="model" id="model" size="1"></select>
+          </label>
+
+          <button type="button" class="btn btn-secondary settings-ref-btn" id="toggleReferenceBtn">👋 Reference</button>
+        </div>
         <p class="model-options-hint" id="modelOptionsHint" aria-live="polite"></p>
+        <p class="live-hint hidden" id="modeHint"></p>
 
-        <p class="live-hint" id="modeHint"></p>
-
-        <div class="live-block">
-          <span class="label">Live video</span>
+        <div class="workbench-grid">
+          <div class="live-block">
           <div class="live-layout">
             <div class="live-main">
-              <div class="video-wrap">
-                <video id="liveVideo" playsinline muted autoplay></video>
-                <div class="video-prediction-overlay" aria-live="polite">
-                  <div class="video-letter-overlay" id="videoLetterOverlay">-</div>
-                  <div class="video-word-overlay" id="videoWordOverlay">Word: -</div>
+              <div class="source-segment" role="tablist" aria-label="Media source">
+                <button type="button" class="segment-btn active" id="sourceLiveBtn" role="tab" aria-selected="true">Live Camera</button>
+                <button type="button" class="segment-btn" id="sourceUploadBtn" role="tab" aria-selected="false">Upload File</button>
+              </div>
+
+              <div id="mediaLivePane" class="media-pane">
+                <div class="video-wrap">
+                  <video id="liveVideo" playsinline muted autoplay></video>
+                  <canvas id="landmarkOverlay" class="landmark-overlay" aria-hidden="true"></canvas>
+                  <button type="button" class="mirror-icon-btn active" id="mirrorToggleBtn" title="Toggle mirror">⇋</button>
+                  <div class="video-word-overlay-wrap" aria-live="polite">
+                    <span class="video-hud-word" id="predWordBar">Word: -</span>
+                  </div>
+                  <div class="video-shortcuts-hint under-word" aria-hidden="true">
+                    <kbd>Space</kbd> to Confirm
+                    <span class="hint-sep">•</span>
+                    <kbd>Enter</kbd> to Commit
+                  </div>
+                  <div class="video-letter-overlay-wrap" aria-live="polite">
+                    <span class="video-hud-letter" id="videoLetterBottom">-</span>
+                  </div>
+                  <button type="button" class="fab-live" id="fabLiveToggle" title="Start live detection">▶</button>
                 </div>
               </div>
-              <details class="live-chart-dropdown" aria-label="Fingerspelling gesture reference">
-                <summary>Show gesture chart</summary>
-                <aside class="live-sidebar">
-                  <p class="label live-sidebar-title">Gesture chart</p>
-                  <a class="chart-image-link" href="https://upload.wikimedia.org/wikipedia/commons/c/c8/Asl_alphabet_gallaudet.svg" target="_blank" rel="noopener noreferrer">
-                    <img
-                      class="chart-image"
-                      src="https://upload.wikimedia.org/wikipedia/commons/c/c8/Asl_alphabet_gallaudet.svg"
-                      alt="ASL fingerspelling chart with hand gestures for letters A to Z"
-                      loading="lazy"
-                      referrerpolicy="no-referrer"
-                    >
-                  </a>
-                  <p class="sub chart-practice">
-                    Demo order: <code>A</code> → <code>B</code> → <code>C</code> → <code>L</code> → <code>V</code> → <code>Y</code> → <code>1</code> → <code>2</code> → <code>5</code>.
-                  </p>
-                </aside>
-              </details>
-              <section id="result" class="result result-overlay">
-                <div class="letter-box" id="letterBox">-</div>
-                <p class="conf" id="confidence">Waiting for prediction...</p>
-                <h3 class="list-title">Top predictions</h3>
-                <ol id="topList" class="top-list"><li>—</li></ol>
-              </section>
+
+              <div id="mediaUploadPane" class="media-pane hidden">
+                <label class="field upload-zone" id="zone">
+                  <input type="file" name="image" id="file" accept="image/*,video/*" hidden>
+                  <span class="upload-hint" id="hint">Click or drop an image or video here</span>
+                  <span class="file-name" id="fileName"></span>
+                </label>
+                <button type="submit" class="btn" id="submit">Predict from image or video</button>
+              </div>
+
+              <input type="checkbox" id="mirrorToServer" checked hidden>
             </div>
           </div>
-          <label class="field" style="margin-top: 0.25rem;">
-            <span class="label">Orientation</span>
-            <span style="display:flex; align-items:center; gap:0.5rem; font-size:0.9rem; color:#cbd5e1;">
-              <input type="checkbox" id="mirrorToServer" checked>
-              Mirror to match training (horizontal flip)
-            </span>
-          </label>
-          <p class="live-hint">Browser captures the camera locally; frames are posted to the Flask server. WLASL uses a rolling 30-frame buffer, so it needs a few seconds before the first word prediction appears. Letter backends (MediaPipe, PyTorch image, YOLO) buffer frames for the Part 3 text decoder — spell slowly with short pauses between words.</p>
-          <div class="live-actions">
-            <button type="button" class="btn btn-live" id="btnLiveStart">Start camera</button>
-            <button type="button" class="btn btn-secondary" id="btnLiveStop" disabled>Stop</button>
           </div>
+
+          <aside class="smart-sidebar" id="aslRefPanel" aria-label="Gesture reference sidebar">
+            <div class="reference-sidebar-head">
+              <button type="button" id="closeReferenceBtn" class="panel-close-btn" title="Close reference">✕</button>
+            </div>
+            <div class="sidebar-content reference-sidebar-content hidden" id="referenceSidebarContent">
+              <div class="gesture-thumb-grid">
+                <a class="chart-image-link floating-reference-link" href="https://upload.wikimedia.org/wikipedia/commons/c/c8/Asl_alphabet_gallaudet.svg" target="_blank" rel="noopener noreferrer">
+                  <img
+                    class="chart-image floating-reference-image"
+                    src="https://upload.wikimedia.org/wikipedia/commons/c/c8/Asl_alphabet_gallaudet.svg"
+                    alt="ASL fingerspelling chart with hand gestures for letters A to Z"
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  >
+                </a>
+              </div>
+            </div>
+
+            <details id="inferencePanel" class="sidebar-panel" open>
+              <summary><span>Inference Brain</span></summary>
+              <div class="sidebar-content">
+                <section id="result" class="result result-overlay">
+                  <div class="letter-box" id="letterBox">-</div>
+                  <p class="conf" id="confidence">Waiting for prediction...</p>
+                  <h3 class="list-title">Live confidence</h3>
+                  <ol id="topList" class="top-list"><li>—</li></ol>
+                </section>
+
+                <section id="decoderSection" class="decoder hidden" aria-live="polite">
+                  <div class="decoder-toggle-row">
+                    <span class="decoder-toggle-label">View</span>
+                    <div class="decoder-toggle" role="tablist" aria-label="Decoder output style">
+                      <button type="button" class="decoder-toggle-btn" id="decoderModeSentence" role="tab" aria-selected="true">Sentence</button>
+                      <button type="button" class="decoder-toggle-btn" id="decoderModeWords" role="tab" aria-selected="false">Words</button>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-clear-decoder icon-only" id="btnClearDecoder" title="Clear decoded text and reset the live buffer">🗑</button>
+                  </div>
+                  <p class="decoder-hint" id="decoderModeHint"></p>
+                  <p class="decoder-sentence" id="decoderSentence"></p>
+                  <div id="decoderWordsWrap" class="decoder-words-wrap hidden">
+                    <div id="decoderWordChips" class="decoder-word-chips"></div>
+                    <p class="decoder-chunks"><span class="decoder-label">Letter groups:</span> <span id="decoderLetterChunks"></span></p>
+                  </div>
+                  <p class="decoder-smoothed"><span class="decoder-label">Smoothed letters:</span> <span id="decoderSmoothed"></span></p>
+                  <div id="decoderBeamBlock">
+                    <h4 class="decoder-subtitle">Sentence hypotheses (beam)</h4>
+                    <ol id="decoderBeams" class="decoder-beams"></ol>
+                  </div>
+                  <p class="decoder-meta tiny-mono" id="decoderMeta"></p>
+                </section>
+              </div>
+            </details>
+          </aside>
         </div>
-
-        <label class="field upload-zone" id="zone">
-          <input type="file" name="image" id="file" accept="image/*,video/*" hidden>
-          <span class="upload-hint" id="hint">Click or drop an image or video here</span>
-          <span class="file-name" id="fileName"></span>
-        </label>
-
-        <button type="submit" class="btn" id="submit">Predict from image or video</button>
       </form>
 
       <div id="status" class="status" aria-live="polite"></div>
-
-      <section id="decoderSection" class="decoder hidden" aria-live="polite">
-        <div class="decoder-header-row">
-          <h3 class="list-title decoder-heading">Part 3 decoder (fingerspelling)</h3>
-          <button type="button" class="btn btn-secondary btn-clear-decoder" id="btnClearDecoder" title="Clear decoded text and reset the live buffer">
-            Clear text
-          </button>
-        </div>
-        <div class="decoder-toggle-row">
-          <span class="decoder-toggle-label">View</span>
-          <div class="decoder-toggle" role="tablist" aria-label="Decoder output style">
-            <button type="button" class="decoder-toggle-btn" id="decoderModeSentence" role="tab" aria-selected="true">Sentence</button>
-            <button type="button" class="decoder-toggle-btn" id="decoderModeWords" role="tab" aria-selected="false">Words</button>
-          </div>
-        </div>
-        <p class="decoder-hint" id="decoderModeHint"></p>
-        <p class="decoder-sentence" id="decoderSentence"></p>
-        <div id="decoderWordsWrap" class="decoder-words-wrap hidden">
-          <div id="decoderWordChips" class="decoder-word-chips"></div>
-          <p class="decoder-chunks"><span class="decoder-label">Letter groups:</span> <span id="decoderLetterChunks"></span></p>
-        </div>
-        <p class="decoder-meta" id="decoderMeta"></p>
-        <p class="decoder-smoothed"><span class="decoder-label">Smoothed letters:</span> <span id="decoderSmoothed"></span></p>
-        <div id="decoderBeamBlock">
-          <h4 class="decoder-subtitle">Sentence hypotheses (beam)</h4>
-          <ol id="decoderBeams" class="decoder-beams"></ol>
-        </div>
-      </section>
     </main>
 
-    <footer class="footer">
-      <p>
-        MediaPipe: <code>data/label_map.npy</code> + <code>models/*.pkl</code>.
-        Image: <code>models/cnn_best.pt</code>, <code>mobilenet_best.pt</code>, <code>resnet18_best.pt</code>, or <code>vgg11_bn_best.pt</code>.
-        YOLO: <code>models/yolo_cls_best.pt</code>.
-        WLASL: <code>part2_word_recognizer/models/bilstm_best.pt</code> or <code>transformer_best.pt</code>.
-        Video uploads: default max ~128 MB (set <code>MAX_VIDEO_UPLOAD_MB</code> to change); long clips are downsampled to at most 300 frames for prediction.
-      </p>
-    </footer>
   </div>
 
   <script>
@@ -188,9 +261,9 @@
     const statusEl = document.getElementById('status');
     const resultEl = document.getElementById('result');
     const letterBox = document.getElementById('letterBox');
-    const videoLetterOverlay = document.getElementById('videoLetterOverlay');
-    const videoWordOverlay = document.getElementById('videoWordOverlay');
+    const videoLetterBottom = document.getElementById('videoLetterBottom');
     const confidenceEl = document.getElementById('confidence');
+    const predWordBar = document.getElementById('predWordBar');
     const topList = document.getElementById('topList');
     const decoderSection = document.getElementById('decoderSection');
     const decoderModeSentence = document.getElementById('decoderModeSentence');
@@ -201,17 +274,36 @@
     const decoderWordChips = document.getElementById('decoderWordChips');
     const decoderLetterChunks = document.getElementById('decoderLetterChunks');
     const decoderMeta = document.getElementById('decoderMeta');
+    const liveDebugLine = null;
     const decoderSmoothed = document.getElementById('decoderSmoothed');
     const decoderBeamBlock = document.getElementById('decoderBeamBlock');
     const decoderBeams = document.getElementById('decoderBeams');
+    const spaceKeyIcon = null;
+    const enterKeyIcon = null;
     const DECODER_MODE_KEY = 'asl-fingerspell-decoder-view';
     let lastDecoderPayload = null;
     let decoderViewMode = sessionStorage.getItem(DECODER_MODE_KEY) || 'sentence';
+    let liveHudWord = '-';
+    let liveLetterValue = '';
+    let committedWordBuffer = '';
+    let pendingLetterBuffer = '';
+    let confirmedHypothesis = '';
     const submitBtn = document.getElementById('submit');
     const liveVideo = document.getElementById('liveVideo');
-    const btnLiveStart = document.getElementById('btnLiveStart');
-    const btnLiveStop = document.getElementById('btnLiveStop');
+    const sourceLiveBtn = document.getElementById('sourceLiveBtn');
+    const sourceUploadBtn = document.getElementById('sourceUploadBtn');
+    const mediaLivePane = document.getElementById('mediaLivePane');
+    const mediaUploadPane = document.getElementById('mediaUploadPane');
+    const mirrorToggleBtn = document.getElementById('mirrorToggleBtn');
+    const toggleReferenceBtn = document.getElementById('toggleReferenceBtn');
+    const closeReferenceBtn = document.getElementById('closeReferenceBtn');
+    const aslRefPanel = document.getElementById('aslRefPanel');
+    const referenceSidebarContent = document.getElementById('referenceSidebarContent');
+    const fabLiveToggle = document.getElementById('fabLiveToggle');
+    const landmarkOverlay = document.getElementById('landmarkOverlay');
     const mirrorToServerEl = document.getElementById('mirrorToServer');
+    toggleReferenceBtn.setAttribute('aria-expanded', 'false');
+    toggleReferenceBtn.classList.remove('active');
     const snapCanvas = document.createElement('canvas');
     const clientId = (() => {
       const key = 'asl-demo-client-id';
@@ -234,6 +326,101 @@
     /** Live camera: MediaPipe + model + Part 3 decoder can exceed a few seconds on CPU. */
     const LIVE_FETCH_TIMEOUT_MS = 90000;
     const VIDEO_FETCH_TIMEOUT_MS = 180000;
+    let skeletonAlpha = 0;
+    let prevLandmarkPoints = null;
+    let lastLandmarkTs = 0;
+    const HAND_CONNECTIONS = [
+      [0, 1], [1, 2], [2, 3], [3, 4],
+      [0, 5], [5, 6], [6, 7], [7, 8],
+      [5, 9], [9, 10], [10, 11], [11, 12],
+      [9, 13], [13, 14], [14, 15], [15, 16],
+      [13, 17], [17, 18], [18, 19], [19, 20],
+      [0, 17],
+    ];
+
+    function clearLandmarkOverlay() {
+      if (!landmarkOverlay) return;
+      const ctx = landmarkOverlay.getContext('2d');
+      if (!ctx) return;
+      skeletonAlpha = 0;
+      prevLandmarkPoints = null;
+      lastLandmarkTs = 0;
+      ctx.clearRect(0, 0, landmarkOverlay.width || 0, landmarkOverlay.height || 0);
+    }
+
+    function drawLandmarkOverlay(points) {
+      if (!landmarkOverlay || !Array.isArray(points) || points.length < 21) {
+        clearLandmarkOverlay();
+        return;
+      }
+      const w = liveVideo.videoWidth || landmarkOverlay.clientWidth;
+      const h = liveVideo.videoHeight || landmarkOverlay.clientHeight;
+      if (!w || !h) return;
+      if (landmarkOverlay.width !== w) landmarkOverlay.width = w;
+      if (landmarkOverlay.height !== h) landmarkOverlay.height = h;
+      const ctx = landmarkOverlay.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+
+      const drawPts = points.map((p) => {
+        const rawX = Number(p[0]);
+        const rawY = Number(p[1]);
+        // The video element is mirrored in CSS. If the server did not mirror input,
+        // mirror x for display so overlay still aligns with the shown feed.
+        const xNorm = mirrorToServerEl && mirrorToServerEl.checked ? rawX : (1 - rawX);
+        return { x: xNorm * w, y: rawY * h };
+      });
+
+      // Smooth fade-in while hand is being tracked.
+      skeletonAlpha = Math.min(1, skeletonAlpha * 0.72 + 0.28);
+
+      // Motion blur hint: if landmark displacement per second is high, tint amber.
+      const now = performance.now();
+      let useAmber = false;
+      if (prevLandmarkPoints && lastLandmarkTs > 0) {
+        const dt = Math.max(1, now - lastLandmarkTs);
+        let accum = 0;
+        let cnt = 0;
+        for (let i = 0; i < Math.min(prevLandmarkPoints.length, drawPts.length); i++) {
+          const p0 = prevLandmarkPoints[i];
+          const p1 = drawPts[i];
+          if (!p0 || !p1) continue;
+          const dx = (p1.x - p0.x) / w;
+          const dy = (p1.y - p0.y) / h;
+          accum += Math.hypot(dx, dy);
+          cnt += 1;
+        }
+        const avgDisp = cnt > 0 ? (accum / cnt) : 0;
+        const speed = avgDisp / (dt / 1000); // normalized units/sec
+        useAmber = speed > 0.55;
+      }
+      prevLandmarkPoints = drawPts.map((p) => ({ x: p.x, y: p.y }));
+      lastLandmarkTs = now;
+
+      ctx.lineWidth = 1.4;
+      ctx.globalAlpha = skeletonAlpha;
+      ctx.strokeStyle = useAmber ? 'rgba(251, 191, 36, 0.82)' : 'rgba(34, 211, 238, 0.92)'; // amber/cyan
+      ctx.shadowBlur = 7;
+      ctx.shadowColor = useAmber ? 'rgba(251, 191, 36, 0.38)' : 'rgba(34, 211, 238, 0.6)';
+      HAND_CONNECTIONS.forEach(([a, b]) => {
+        const p1 = drawPts[a];
+        const p2 = drawPts[b];
+        if (!p1 || !p2) return;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      });
+
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = useAmber ? 'rgba(253, 186, 116, 0.9)' : 'rgba(163, 230, 53, 0.95)'; // subtle amber/lime
+      drawPts.forEach((p) => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+    }
 
     function isVideoFile(file) {
       if (!file) return false;
@@ -264,18 +451,73 @@
     }
 
     function showStatus(msg, isError) {
+      if (!isError && (msg === 'Live mode on.' || msg === 'Live mode off.')) {
+        msg = '';
+      }
       statusEl.textContent = msg;
       statusEl.className = 'status' + (isError ? ' error' : '');
+    }
+
+    function setSourceMode(mode) {
+      const isLive = mode === 'live';
+      mediaLivePane.classList.toggle('hidden', !isLive);
+      mediaUploadPane.classList.toggle('hidden', isLive);
+      sourceLiveBtn.classList.toggle('active', isLive);
+      sourceUploadBtn.classList.toggle('active', !isLive);
+      sourceLiveBtn.setAttribute('aria-selected', isLive ? 'true' : 'false');
+      sourceUploadBtn.setAttribute('aria-selected', !isLive ? 'true' : 'false');
+      if (!isLive && liveStream) {
+        void stopLiveCamera();
+      }
+    }
+
+    function setFabRunning(isRunning) {
+      fabLiveToggle.textContent = isRunning ? '■' : '▶';
+      fabLiveToggle.title = isRunning ? 'Stop live detection' : 'Start live detection';
+      fabLiveToggle.classList.toggle('running', isRunning);
     }
 
     function hideResult() {
       // Keep the result panel visible as a stable "status stage".
       letterBox.textContent = '-';
-      videoLetterOverlay.textContent = '-';
-      videoWordOverlay.textContent = 'Word: -';
+      videoLetterBottom.textContent = '-';
+      liveHudWord = '-';
+      liveLetterValue = '';
+      committedWordBuffer = '';
+      pendingLetterBuffer = '';
+      confirmedHypothesis = '';
+      predWordBar.textContent = 'Word: -';
+      letterBox.classList.remove('conf-high', 'conf-low');
       confidenceEl.textContent = 'Waiting for prediction...';
       topList.innerHTML = '<li>—</li>';
       decoderSection.classList.add('hidden');
+      if (liveDebugLine) liveDebugLine.textContent = '';
+    }
+
+    function getTopBeamHypothesis() {
+      const dec = lastDecoderPayload;
+      if (!dec || !Array.isArray(dec.beam_top) || !dec.beam_top.length) return '';
+      const top = dec.beam_top[0];
+      const words = Array.isArray(top.words) ? top.words.filter(Boolean) : [];
+      return words.join(' ').trim();
+    }
+
+    function refreshHudOverlay() {
+      const shownWord = committedWordBuffer || '-';
+      predWordBar.textContent = 'Word: ' + shownWord;
+    }
+
+    function pulseShortcutIcon(iconEl) {
+      if (!iconEl) return;
+      iconEl.classList.remove('glow');
+      void iconEl.offsetWidth;
+      iconEl.classList.add('glow');
+    }
+
+    function isTypingTarget(el) {
+      if (!el) return false;
+      const tag = (el.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || !!el.isContentEditable;
     }
 
     function getOverlayWord(data) {
@@ -355,12 +597,20 @@
       if (decoderViewMode === 'sentence' && dec.word_fragments && dec.word_fragments.length) {
         bits.push('fragments: ' + dec.word_fragments.join(' | '));
       }
-      decoderMeta.textContent = bits.join(' · ');
+      decoderMeta.textContent = '';
+      if (liveDebugLine) liveDebugLine.textContent = bits.join(' · ');
       decoderSmoothed.textContent = dec.smoothed_letters || '';
       decoderBeams.innerHTML = '';
       (dec.beam_top || []).forEach((row) => {
         const li = document.createElement('li');
-        li.textContent = (row.words || []).join(' ') + '  (score ' + row.score + ')';
+        const words = (row.words || []).join(' ') || '(empty)';
+        const score = Number(row.score || 0);
+        const pct = Math.max(0, Math.min(100, Math.round((score + 1) * 50)));
+        li.className = 'beam-row' + (pct < 35 ? ' dim' : '');
+        li.innerHTML =
+          '<span class="beam-label">' + words + '</span>' +
+          '<span class="beam-bar"><span class="beam-fill" style="width:' + pct + '%"></span></span>' +
+          '<span class="beam-score">' + score.toFixed(3) + '</span>';
         decoderBeams.appendChild(li);
       });
       renderDecoderPrimary();
@@ -387,6 +637,7 @@
       decoderModeHint.textContent = '';
       decoderMeta.textContent = '';
       decoderSmoothed.textContent = '';
+      if (liveDebugLine) liveDebugLine.textContent = '';
       decoderWordChips.innerHTML = '';
       decoderLetterChunks.textContent = '';
       decoderBeams.innerHTML = '';
@@ -459,24 +710,29 @@
         submitBtn.disabled = false;
         submitBtn.textContent = 'Predict from image or video';
         hint.textContent = 'Click or drop an image or video here';
+        sourceUploadBtn.disabled = false;
       } else if (backend === 'image') {
         modelLabelEl.textContent = 'Image model';
         modeHintEl.textContent = 'Image models resize each frame to 64×64 RGB (no hand landmark step).';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Predict from image or video';
         hint.textContent = 'Click or drop an image or video here';
+        sourceUploadBtn.disabled = false;
       } else if (backend === 'yolo') {
         modelLabelEl.textContent = 'Letter model';
         modeHintEl.textContent = 'YOLO classifies each sampled video frame or the full still image.';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Predict from image or video';
         hint.textContent = 'Click or drop an image or video here';
+        sourceUploadBtn.disabled = false;
       } else {
         modelLabelEl.textContent = 'Word model';
         modeHintEl.textContent = 'WLASL is sequence-based. Use Start camera and hold a sign for several frames.';
         submitBtn.textContent = 'Single image not supported';
         hint.textContent = 'WLASL word mode works from live camera, not a single still image';
         submitBtn.disabled = true;
+        setSourceMode('live');
+        sourceUploadBtn.disabled = true;
       }
       hideResult();
       showStatus('', false);
@@ -485,6 +741,7 @@
     function applyPrediction(data) {
       if (!data.ok) {
         showStatus(data.error || 'Request failed', true);
+        clearLandmarkOverlay();
         decoderSection.classList.add('hidden');
         return;
       }
@@ -495,18 +752,24 @@
         showStatus(data.message || 'No hand detected.', false);
       } else if (data.message) {
         showStatus(data.message, false);
-      } else {
-        showStatus(liveTimer ? 'Live prediction updated.' : 'Done.', false);
+      } else if (!liveTimer) {
+        // Avoid per-frame status churn in live mode (it can look jumpy).
+        showStatus('Done.', false);
       }
 
       const label = (data.label || '-').toUpperCase();
       letterBox.textContent = label;
-      videoLetterOverlay.textContent = label;
-      videoWordOverlay.textContent = 'Word: ' + getOverlayWord(data);
-      letterBox.classList.remove('pop');
-      // Restart the subtle pulse each time a new prediction arrives.
-      void letterBox.offsetWidth;
-      letterBox.classList.add('pop');
+      videoLetterBottom.textContent = label;
+      liveLetterValue = (label && label !== '-') ? label.toLowerCase() : '';
+      liveHudWord = getOverlayWord(data);
+      refreshHudOverlay();
+      const confValue = (data.confidence != null) ? Number(data.confidence) : null;
+      const isHighConf = confValue != null && confValue >= 0.9;
+      const isLowConf = confValue != null && confValue < 0.9;
+      [letterBox, videoLetterBottom, predWordBar].forEach((el) => {
+        el.classList.toggle('conf-high', isHighConf);
+        el.classList.toggle('conf-low', isLowConf);
+      });
       const c = data.confidence != null ? Math.round(data.confidence * 1000) / 10 : null;
       const pieces = [];
       if (c != null) pieces.push('Confidence: ' + c + '%');
@@ -524,11 +787,16 @@
       (data.top_predictions || []).forEach((row) => {
         const li = document.createElement('li');
         const pct = Math.round(row.confidence * 1000) / 10;
-        li.textContent = row.label + ' - ' + pct + '%';
+        li.className = 'pred-row';
+        li.innerHTML =
+          '<span class="pred-label">' + row.label + '</span>' +
+          '<span class="pred-bar"><span class="pred-fill" style="width:' + pct + '%"></span></span>' +
+          '<span class="pred-pct">' + pct + '%</span>';
         topList.appendChild(li);
       });
       resultEl.classList.remove('hidden');
       applyDecoderPayload(data.decoder);
+      drawLandmarkOverlay(data.landmarks);
     }
 
     async function postResetWlasl() {
@@ -609,6 +877,8 @@
         const blob = await new Promise((resolve) => snapCanvas.toBlob(resolve, 'image/jpeg', 0.88));
         if (!blob) return;
         const data = await predictBlob(blob, 'live');
+        // If camera was stopped while this request was in-flight, ignore stale response.
+        if (!liveStream || !liveTimer) return;
         applyPrediction(data);
       } catch (err) {
         showStatus('Live error: ' + formatLiveFetchError(err), true);
@@ -617,27 +887,29 @@
       }
     }
 
-    btnLiveStart.addEventListener('click', async () => {
+    async function startLiveCamera() {
       if (liveStream) return;
       try {
         await postResetWlasl();
+        // Fresh camera session should start with an empty HUD word buffer.
+        hideResult();
+        refreshHudOverlay();
         liveStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
           audio: false,
         });
         liveVideo.srcObject = liveStream;
         await liveVideo.play();
-        btnLiveStart.disabled = true;
-        btnLiveStop.disabled = false;
-        showStatus('Live mode on.', false);
+        setFabRunning(true);
+        showStatus('', false);
         resultEl.classList.remove('hidden');
         liveTimer = setInterval(tickLive, LIVE_INTERVAL_MS);
       } catch (err) {
         showStatus('Camera not available: ' + err.message, true);
       }
-    });
+    }
 
-    btnLiveStop.addEventListener('click', async () => {
+    async function stopLiveCamera() {
       if (liveTimer) {
         clearInterval(liveTimer);
         liveTimer = null;
@@ -647,10 +919,89 @@
         liveStream = null;
       }
       liveVideo.srcObject = null;
-      btnLiveStart.disabled = false;
-      btnLiveStop.disabled = true;
-      await postResetWlasl();
-      showStatus('Live mode off.', false);
+      // Clear UI state immediately on camera stop.
+      committedWordBuffer = '';
+      pendingLetterBuffer = '';
+      confirmedHypothesis = '';
+      hideResult();
+      refreshHudOverlay();
+      try {
+        await postResetWlasl();
+      } catch (e) {
+        // Local UI should still reset even if server reset fails.
+      } finally {
+        clearLandmarkOverlay();
+        setFabRunning(false);
+        hideResult();
+        refreshHudOverlay();
+        showStatus('', false);
+      }
+    }
+
+    sourceLiveBtn.addEventListener('click', () => setSourceMode('live'));
+    sourceUploadBtn.addEventListener('click', () => setSourceMode('upload'));
+    mirrorToggleBtn.addEventListener('click', () => {
+      mirrorToServerEl.checked = !mirrorToServerEl.checked;
+      mirrorToggleBtn.classList.toggle('active', mirrorToServerEl.checked);
+    });
+    toggleReferenceBtn.addEventListener('click', () => {
+      const opening = referenceSidebarContent.classList.contains('hidden');
+      referenceSidebarContent.classList.toggle('hidden', !opening);
+      toggleReferenceBtn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      toggleReferenceBtn.classList.toggle('active', opening);
+    });
+    closeReferenceBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      referenceSidebarContent.classList.add('hidden');
+      toggleReferenceBtn.setAttribute('aria-expanded', 'false');
+      toggleReferenceBtn.classList.remove('active');
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (isTypingTarget(e.target)) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        pulseShortcutIcon(spaceKeyIcon);
+        if (liveLetterValue) {
+          pendingLetterBuffer += liveLetterValue;
+          confirmedHypothesis = '';
+          showStatus('Letter entered: ' + liveLetterValue.toUpperCase(), false);
+        }
+        return;
+      }
+
+      if (e.code === 'Enter') {
+        e.preventDefault();
+        pulseShortcutIcon(enterKeyIcon);
+        const topHyp = getTopBeamHypothesis();
+        if (topHyp) {
+          // Enter commits a single recommended word (replace previous display).
+          committedWordBuffer = topHyp;
+          pendingLetterBuffer = '';
+          confirmedHypothesis = topHyp;
+          refreshHudOverlay();
+          showStatus('Word recommendation entered: ' + topHyp, false);
+        } else {
+          committedWordBuffer = '';
+          pendingLetterBuffer = '';
+          confirmedHypothesis = '';
+          refreshHudOverlay();
+          showStatus('Word cleared.', false);
+        }
+      }
+
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        const opening = referenceSidebarContent.classList.contains('hidden');
+        referenceSidebarContent.classList.toggle('hidden', !opening);
+        toggleReferenceBtn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        toggleReferenceBtn.classList.toggle('active', opening);
+      }
+    });
+    fabLiveToggle.addEventListener('click', () => {
+      if (liveStream) void stopLiveCamera();
+      else void startLiveCamera();
     });
 
     form.addEventListener('submit', async (e) => {
@@ -658,7 +1009,7 @@
       if (uploadRequestBusy) return;
       hideResult();
       if (backendEl.value === 'wlasl') {
-        showStatus('WLASL word mode needs live camera input. Click Start camera instead.', true);
+        showStatus('WLASL word mode needs live camera input. Use the play button on the video.', true);
         return;
       }
       if (backendEl.value === 'image' && !['cnn', 'mobilenet', 'resnet', 'vgg'].includes(modelEl.value)) {
@@ -704,6 +1055,8 @@
       }
     });
 
+    setSourceMode('live');
+    setFabRunning(false);
     syncDecoderToggleUI();
     syncBackendUI();
 

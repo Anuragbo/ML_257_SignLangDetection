@@ -25,6 +25,7 @@ from typing import Any
 
 import cv2
 import joblib
+import mediapipe as mp
 import numpy as np
 import torch
 from flask import Flask, jsonify, make_response, render_template, request
@@ -218,6 +219,19 @@ def _best_proba_over_variants(model, feats: np.ndarray, extra_variants: list[np.
     return best
 
 
+def _extract_overlay_landmarks(image_bgr: np.ndarray, detector) -> list[list[float]] | None:
+    """
+    Return up to 21 normalized [x, y] points from the first detected hand.
+    These are used only for client-side overlay drawing (demo visualization).
+    """
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+    result = detector.detect(mp_image)
+    if not result.hand_landmarks:
+        return None
+    return [[float(lm.x), float(lm.y)] for lm in result.hand_landmarks[0]]
+
+
 def predict_mediapipe_from_bytes(image_bytes: bytes, model_name: str, *, mirror: bool = False) -> dict:
     bgr = _load_image(image_bytes)
     if bgr is None:
@@ -251,6 +265,7 @@ def predict_mediapipe_from_bytes(image_bytes: bytes, model_name: str, *, mirror:
     order = np.argsort(proba)[::-1]
     top = [{"label": label_map[int(i)], "confidence": float(proba[i])} for i in order[:8]]
     best_idx = int(order[0])
+    overlay_landmarks = _extract_overlay_landmarks(bgr, detector)
     return {
         "ok": True,
         "backend": "mediapipe",
@@ -260,6 +275,7 @@ def predict_mediapipe_from_bytes(image_bytes: bytes, model_name: str, *, mirror:
         "confidence": float(proba[best_idx]),
         "top_predictions": top,
         "model": model_name,
+        "landmarks": overlay_landmarks,
     }
 
 
