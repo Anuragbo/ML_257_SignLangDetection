@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, max-age=0">
   <title>ASL demo UI</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=29">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=31">
   <style id="layout-lock-v24">
     #form .workbench-grid {
       display: flex !important;
@@ -131,11 +131,7 @@
                   <div class="video-word-overlay-wrap" aria-live="polite">
                     <span class="video-hud-word" id="predWordBar">Word: -</span>
                   </div>
-                  <div class="video-shortcuts-hint under-word" aria-hidden="true">
-                    <kbd>Space</kbd> to Confirm
-                    <span class="hint-sep">•</span>
-                    <kbd>Enter</kbd> to Commit
-                  </div>
+                  <div class="video-shortcuts-hint under-word" id="liveShortcutsHint" aria-hidden="true"></div>
                   <div class="video-letter-overlay-wrap" aria-live="polite">
                     <span class="video-hud-letter" id="videoLetterBottom">-</span>
                   </div>
@@ -187,24 +183,15 @@
 
                 <section id="decoderSection" class="decoder hidden" aria-live="polite">
                   <div class="decoder-toggle-row">
-                    <span class="decoder-toggle-label">View</span>
-                    <div class="decoder-toggle" role="tablist" aria-label="Decoder output style">
-                      <button type="button" class="decoder-toggle-btn" id="decoderModeSentence" role="tab" aria-selected="true">Sentence</button>
-                      <button type="button" class="decoder-toggle-btn" id="decoderModeWords" role="tab" aria-selected="false">Words</button>
-                    </div>
+                    <span class="decoder-toggle-label">Part 3 decoder</span>
                     <button type="button" class="btn btn-secondary btn-clear-decoder icon-only" id="btnClearDecoder" title="Clear decoded text and reset the live buffer">🗑</button>
                   </div>
-                  <p class="decoder-hint" id="decoderModeHint"></p>
-                  <p class="decoder-sentence" id="decoderSentence"></p>
-                  <div id="decoderWordsWrap" class="decoder-words-wrap hidden">
+                  <p class="decoder-hint" id="decoderModeHint">Live camera: classification updates continuously; only <kbd>Space</kbd> appends the current letter to the decoder buffer.</p>
+                  <div id="decoderWordsWrap" class="decoder-words-wrap">
                     <div id="decoderWordChips" class="decoder-word-chips"></div>
                     <p class="decoder-chunks"><span class="decoder-label">Letter groups:</span> <span id="decoderLetterChunks"></span></p>
                   </div>
                   <p class="decoder-smoothed"><span class="decoder-label">Smoothed letters:</span> <span id="decoderSmoothed"></span></p>
-                  <div id="decoderBeamBlock">
-                    <h4 class="decoder-subtitle">Sentence hypotheses (beam)</h4>
-                    <ol id="decoderBeams" class="decoder-beams"></ol>
-                  </div>
                   <p class="decoder-meta tiny-mono" id="decoderMeta"></p>
                 </section>
               </div>
@@ -266,28 +253,19 @@
     const predWordBar = document.getElementById('predWordBar');
     const topList = document.getElementById('topList');
     const decoderSection = document.getElementById('decoderSection');
-    const decoderModeSentence = document.getElementById('decoderModeSentence');
-    const decoderModeWords = document.getElementById('decoderModeWords');
     const decoderModeHint = document.getElementById('decoderModeHint');
-    const decoderSentence = document.getElementById('decoderSentence');
     const decoderWordsWrap = document.getElementById('decoderWordsWrap');
     const decoderWordChips = document.getElementById('decoderWordChips');
     const decoderLetterChunks = document.getElementById('decoderLetterChunks');
     const decoderMeta = document.getElementById('decoderMeta');
     const liveDebugLine = null;
     const decoderSmoothed = document.getElementById('decoderSmoothed');
-    const decoderBeamBlock = document.getElementById('decoderBeamBlock');
-    const decoderBeams = document.getElementById('decoderBeams');
+    const DECODER_HINT_DEFAULT =
+      'Live camera: classification updates continuously; only Space appends the current letter to the decoder buffer.';
     const spaceKeyIcon = null;
-    const enterKeyIcon = null;
-    const DECODER_MODE_KEY = 'asl-fingerspell-decoder-view';
     let lastDecoderPayload = null;
-    let decoderViewMode = sessionStorage.getItem(DECODER_MODE_KEY) || 'sentence';
     let liveHudWord = '-';
     let liveLetterValue = '';
-    let committedWordBuffer = '';
-    let pendingLetterBuffer = '';
-    let confirmedHypothesis = '';
     const submitBtn = document.getElementById('submit');
     const liveVideo = document.getElementById('liveVideo');
     const sourceLiveBtn = document.getElementById('sourceLiveBtn');
@@ -301,6 +279,7 @@
     const referenceSidebarContent = document.getElementById('referenceSidebarContent');
     const fabLiveToggle = document.getElementById('fabLiveToggle');
     const landmarkOverlay = document.getElementById('landmarkOverlay');
+    const liveShortcutsHint = document.getElementById('liveShortcutsHint');
     const mirrorToServerEl = document.getElementById('mirrorToServer');
     toggleReferenceBtn.setAttribute('aria-expanded', 'false');
     toggleReferenceBtn.classList.remove('active');
@@ -321,6 +300,10 @@
     /** Prevents double POST when the submit handler is triggered twice (e.g. fast double-clicks). */
     let uploadRequestBusy = false;
     const LIVE_INTERVAL_MS = 450;
+    const WLASL_SEQ_LEN = 30;
+    const WLASL_CAPTURE_FRAME_MS = 33;
+    let wlaslCapturing = false;
+    let wlaslCaptureAbort = false;
     /** Still-image API calls; keep moderate. */
     const FETCH_TIMEOUT_MS = 6000;
     /** Live camera: MediaPipe + model + Part 3 decoder can exceed a few seconds on CPU. */
@@ -422,6 +405,84 @@
       ctx.globalAlpha = 1;
     }
 
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function normOverlayX(rawX) {
+      const raw = Number(rawX);
+      return mirrorToServerEl && mirrorToServerEl.checked ? raw : (1 - raw);
+    }
+
+    function drawHolisticLandmarkOverlay(holistic) {
+      if (!landmarkOverlay || !holistic) {
+        clearLandmarkOverlay();
+        return;
+      }
+      const hasLh = holistic.left_hand && holistic.left_hand.length >= 2;
+      const hasRh = holistic.right_hand && holistic.right_hand.length >= 2;
+      const hasPose = holistic.pose && holistic.pose.length > 0;
+      if (!hasLh && !hasRh && !hasPose) {
+        clearLandmarkOverlay();
+        return;
+      }
+      const w = liveVideo.videoWidth || landmarkOverlay.clientWidth;
+      const h = liveVideo.videoHeight || landmarkOverlay.clientHeight;
+      if (!w || !h) return;
+      if (landmarkOverlay.width !== w) landmarkOverlay.width = w;
+      if (landmarkOverlay.height !== h) landmarkOverlay.height = h;
+      const ctx = landmarkOverlay.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+      skeletonAlpha = Math.min(1, skeletonAlpha * 0.72 + 0.28);
+      ctx.globalAlpha = skeletonAlpha;
+
+      function toPts(pts) {
+        if (!pts || !pts.length) return [];
+        return pts.map((p) => ({
+          x: normOverlayX(p[0]) * w,
+          y: Number(p[1]) * h,
+        }));
+      }
+
+      function strokeHand(drawPts, stroke, fill) {
+        if (drawPts.length < 2) return;
+        ctx.strokeStyle = stroke;
+        ctx.fillStyle = fill;
+        ctx.lineWidth = 1.4;
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = stroke;
+        HAND_CONNECTIONS.forEach(([a, b]) => {
+          const p1 = drawPts[a];
+          const p2 = drawPts[b];
+          if (!p1 || !p2) return;
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+        });
+        ctx.shadowBlur = 0;
+        drawPts.forEach((p) => {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      strokeHand(toPts(holistic.left_hand), 'rgba(34, 211, 238, 0.92)', 'rgba(163, 230, 53, 0.95)');
+      strokeHand(toPts(holistic.right_hand), 'rgba(200, 0, 200, 0.88)', 'rgba(253, 186, 116, 0.9)');
+      const posePts = toPts(holistic.pose);
+      if (posePts.length) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+        posePts.forEach((p) => {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+      ctx.globalAlpha = 1;
+    }
+
     function isVideoFile(file) {
       if (!file) return false;
       if (file.type && file.type.startsWith('video/')) return true;
@@ -483,28 +544,43 @@
       videoLetterBottom.textContent = '-';
       liveHudWord = '-';
       liveLetterValue = '';
-      committedWordBuffer = '';
-      pendingLetterBuffer = '';
-      confirmedHypothesis = '';
       predWordBar.textContent = 'Word: -';
       letterBox.classList.remove('conf-high', 'conf-low');
       confidenceEl.textContent = 'Waiting for prediction...';
       topList.innerHTML = '<li>—</li>';
       decoderSection.classList.add('hidden');
       if (liveDebugLine) liveDebugLine.textContent = '';
+      clearLandmarkOverlay();
     }
 
-    function getTopBeamHypothesis() {
-      const dec = lastDecoderPayload;
-      if (!dec || !Array.isArray(dec.beam_top) || !dec.beam_top.length) return '';
-      const top = dec.beam_top[0];
-      const words = Array.isArray(top.words) ? top.words.filter(Boolean) : [];
-      return words.join(' ').trim();
+    function refreshLiveShortcutsHint() {
+      if (!liveShortcutsHint) return;
+      if (backendEl.value === 'wlasl') {
+        liveShortcutsHint.innerHTML =
+          '<kbd>Space</kbd> record 30 frames (~1 s), then run word prediction';
+      } else {
+        liveShortcutsHint.innerHTML =
+          '<kbd>Space</kbd> add current letter to decoder (letter backends only)';
+      }
+    }
+
+    function decodedWordList(dec) {
+      if (!dec || dec.error) return [];
+      const beam0 = (dec.beam_top && dec.beam_top[0] && dec.beam_top[0].words) || [];
+      if (beam0.length) return beam0;
+      const s = (dec.sentence || '').trim();
+      if (!s) return [];
+      return s.split(/\s+/).filter(Boolean);
     }
 
     function refreshHudOverlay() {
-      const shownWord = committedWordBuffer || '-';
-      predWordBar.textContent = 'Word: ' + shownWord;
+      let w = liveHudWord;
+      const dec = lastDecoderPayload;
+      if (dec && !dec.error) {
+        const words = decodedWordList(dec);
+        if (words.length) w = String(words[0]).toLowerCase();
+      }
+      predWordBar.textContent = 'Word: ' + (w && w !== '-' ? String(w).toLowerCase() : '-');
     }
 
     function pulseShortcutIcon(iconEl) {
@@ -535,52 +611,25 @@
       return '-';
     }
 
-    function syncDecoderToggleUI() {
-      const isSentence = decoderViewMode === 'sentence';
-      decoderModeSentence.classList.toggle('active', isSentence);
-      decoderModeSentence.setAttribute('aria-selected', isSentence ? 'true' : 'false');
-      decoderModeWords.classList.toggle('active', !isSentence);
-      decoderModeWords.setAttribute('aria-selected', !isSentence ? 'true' : 'false');
-      decoderModeHint.textContent = isSentence
-        ? 'Full decoded line and beam-ranked sentence options.'
-        : 'Single best word only (first word of the beam). Letter groups show smoothed chunks before the lexicon.';
-    }
-
-    function decodedWordList(dec) {
-      const beam0 = (dec.beam_top && dec.beam_top[0] && dec.beam_top[0].words) || [];
-      if (beam0.length) return beam0;
-      const s = (dec.sentence || '').trim();
-      if (!s) return [];
-      return s.split(/\s+/).filter(Boolean);
-    }
-
     function renderDecoderPrimary() {
       if (!lastDecoderPayload) return;
       const dec = lastDecoderPayload;
-      const isSentence = decoderViewMode === 'sentence';
-      decoderSentence.classList.toggle('hidden', !isSentence);
-      decoderWordsWrap.classList.toggle('hidden', isSentence);
-      decoderBeamBlock.classList.toggle('hidden', !isSentence);
-      if (isSentence) {
-        decoderSentence.textContent = dec.sentence || '(empty)';
+      decoderWordChips.innerHTML = '';
+      const words = decodedWordList(dec);
+      const oneWord = words.length ? [words[0]] : [];
+      if (oneWord.length === 0) {
+        const span = document.createElement('span');
+        span.className = 'decoder-chip decoder-chip-empty';
+        span.textContent = '(no words yet)';
+        decoderWordChips.appendChild(span);
       } else {
-        decoderWordChips.innerHTML = '';
-        const words = decodedWordList(dec);
-        const oneWord = words.length ? [words[0]] : [];
-        if (oneWord.length === 0) {
-          const span = document.createElement('span');
-          span.className = 'decoder-chip decoder-chip-empty';
-          span.textContent = '(no words yet)';
-          decoderWordChips.appendChild(span);
-        } else {
-          const span = document.createElement('span');
-          span.className = 'decoder-chip';
-          span.textContent = oneWord[0];
-          decoderWordChips.appendChild(span);
-        }
-        const frags = dec.word_fragments || [];
-        decoderLetterChunks.textContent = frags.length ? frags.join(' · ') : '—';
+        const span = document.createElement('span');
+        span.className = 'decoder-chip';
+        span.textContent = oneWord[0];
+        decoderWordChips.appendChild(span);
       }
+      const frags = dec.word_fragments || [];
+      decoderLetterChunks.textContent = frags.length ? frags.join(' · ') : '—';
     }
 
     function applyDecoderPayload(dec) {
@@ -589,58 +638,35 @@
         lastDecoderPayload = null;
         return;
       }
+      const nBuf = Number(dec.frames_buffered);
+      if (Number.isFinite(nBuf) && nBuf === 0) {
+        lastDecoderPayload = null;
+        decoderSection.classList.add('hidden');
+        refreshHudOverlay();
+        return;
+      }
       lastDecoderPayload = dec;
       decoderSection.classList.remove('hidden');
-      syncDecoderToggleUI();
+      if (decoderModeHint) decoderModeHint.textContent = DECODER_HINT_DEFAULT;
       const bits = [];
-      if (dec.frames_buffered != null) bits.push('buffered frames: ' + dec.frames_buffered);
-      if (decoderViewMode === 'sentence' && dec.word_fragments && dec.word_fragments.length) {
-        bits.push('fragments: ' + dec.word_fragments.join(' | '));
-      }
-      decoderMeta.textContent = '';
+      if (dec.frames_buffered != null) bits.push('Committed frames in buffer: ' + dec.frames_buffered);
+      decoderMeta.textContent = bits.join(' · ');
       if (liveDebugLine) liveDebugLine.textContent = bits.join(' · ');
       decoderSmoothed.textContent = dec.smoothed_letters || '';
-      decoderBeams.innerHTML = '';
-      (dec.beam_top || []).forEach((row) => {
-        const li = document.createElement('li');
-        const words = (row.words || []).join(' ') || '(empty)';
-        const score = Number(row.score || 0);
-        const pct = Math.max(0, Math.min(100, Math.round((score + 1) * 50)));
-        li.className = 'beam-row' + (pct < 35 ? ' dim' : '');
-        li.innerHTML =
-          '<span class="beam-label">' + words + '</span>' +
-          '<span class="beam-bar"><span class="beam-fill" style="width:' + pct + '%"></span></span>' +
-          '<span class="beam-score">' + score.toFixed(3) + '</span>';
-        decoderBeams.appendChild(li);
-      });
       renderDecoderPrimary();
     }
-
-    function setDecoderViewMode(mode) {
-      decoderViewMode = mode === 'words' ? 'words' : 'sentence';
-      sessionStorage.setItem(DECODER_MODE_KEY, decoderViewMode);
-      syncDecoderToggleUI();
-      if (lastDecoderPayload) {
-        applyDecoderPayload(lastDecoderPayload);
-      }
-    }
-
-    decoderModeSentence.addEventListener('click', () => setDecoderViewMode('sentence'));
-    decoderModeWords.addEventListener('click', () => setDecoderViewMode('words'));
 
     const btnClearDecoder = document.getElementById('btnClearDecoder');
 
     function clearDecoderUi() {
       lastDecoderPayload = null;
       decoderSection.classList.add('hidden');
-      decoderSentence.textContent = '';
-      decoderModeHint.textContent = '';
+      if (decoderModeHint) decoderModeHint.textContent = DECODER_HINT_DEFAULT;
       decoderMeta.textContent = '';
       decoderSmoothed.textContent = '';
       if (liveDebugLine) liveDebugLine.textContent = '';
       decoderWordChips.innerHTML = '';
       decoderLetterChunks.textContent = '';
-      decoderBeams.innerHTML = '';
     }
 
     async function clearDecoderOutput() {
@@ -706,28 +732,29 @@
 
       if (backend === 'mediapipe') {
         modelLabelEl.textContent = 'Letter model';
-        modeHintEl.textContent = 'Upload an image or video, or use live camera. Videos are sampled (up to 300 frames) then decoded.';
+        modeHintEl.textContent = 'Live camera: predictions refresh continuously; press Space once per letter to append it to the Part 3 decoder. Upload: image/video is decoded as a continuous stream.';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Predict from image or video';
         hint.textContent = 'Click or drop an image or video here';
         sourceUploadBtn.disabled = false;
       } else if (backend === 'image') {
         modelLabelEl.textContent = 'Image model';
-        modeHintEl.textContent = 'Image models resize each frame to 64×64 RGB (no hand landmark step).';
+        modeHintEl.textContent = 'Image models resize each frame to 64×64 RGB (no hand landmark step). Live: Space commits the current guess to Part 3; preview updates continuously.';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Predict from image or video';
         hint.textContent = 'Click or drop an image or video here';
         sourceUploadBtn.disabled = false;
       } else if (backend === 'yolo') {
         modelLabelEl.textContent = 'Letter model';
-        modeHintEl.textContent = 'YOLO classifies each sampled video frame or the full still image.';
+        modeHintEl.textContent = 'YOLO classifies each sampled video frame or the full still image. Live: Space commits the current guess to Part 3.';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Predict from image or video';
         hint.textContent = 'Click or drop an image or video here';
         sourceUploadBtn.disabled = false;
       } else {
         modelLabelEl.textContent = 'Word model';
-        modeHintEl.textContent = 'WLASL is sequence-based. Use Start camera and hold a sign for several frames.';
+        modeHintEl.textContent =
+          'WLASL: Start camera, perform the sign, then press Space once to record 30 frames (~1 s) and predict. Holistic landmarks overlay like the Part 2 demo.';
         submitBtn.textContent = 'Single image not supported';
         hint.textContent = 'WLASL word mode works from live camera, not a single still image';
         submitBtn.disabled = true;
@@ -735,6 +762,7 @@
         sourceUploadBtn.disabled = true;
       }
       hideResult();
+      refreshLiveShortcutsHint();
       showStatus('', false);
     }
 
@@ -748,12 +776,11 @@
 
       if (data.task === 'video') {
         showStatus(data.message || 'Video processed.', false);
-      } else if (!data.hand_detected && !data.label) {
-        showStatus(data.message || 'No hand detected.', false);
       } else if (data.message) {
         showStatus(data.message, false);
-      } else if (!liveTimer) {
-        // Avoid per-frame status churn in live mode (it can look jumpy).
+      } else if (!data.hand_detected && !data.label) {
+        showStatus('No hand detected.', false);
+      } else if (!liveTimer && !wlaslCapturing) {
         showStatus('Done.', false);
       }
 
@@ -796,7 +823,11 @@
       });
       resultEl.classList.remove('hidden');
       applyDecoderPayload(data.decoder);
-      drawLandmarkOverlay(data.landmarks);
+      if (data.holistic) {
+        drawHolisticLandmarkOverlay(data.holistic);
+      } else {
+        drawLandmarkOverlay(data.landmarks);
+      }
     }
 
     async function postResetWlasl() {
@@ -832,13 +863,18 @@
       }
     }
 
-    async function predictBlob(blob, streamMode) {
+    async function predictBlob(blob, streamMode, opts) {
+      if (typeof opts === 'boolean') opts = { decoderCommit: opts };
+      opts = opts || {};
       const fd = new FormData();
       fd.append('image', blob, 'frame.jpg');
       fd.append('backend', backendEl.value);
       fd.append('model', modelEl.value);
       fd.append('client_id', clientId);
       fd.append('stream_mode', streamMode || 'image');
+      fd.append('decoder_commit', opts.decoderCommit ? '1' : '0');
+      fd.append('wlasl_append', opts.wlaslAppend ? '1' : '0');
+      fd.append('wlasl_reset_capture', opts.wlaslReset ? '1' : '0');
       fd.append('mirror', mirrorToServerEl && mirrorToServerEl.checked ? '1' : '0');
       const timeoutMs = (streamMode === 'live') ? LIVE_FETCH_TIMEOUT_MS : FETCH_TIMEOUT_MS;
       const controller = new AbortController();
@@ -864,24 +900,94 @@
       return msg;
     }
 
+    async function grabLiveJpegBlob() {
+      const w = liveVideo.videoWidth;
+      const h = liveVideo.videoHeight;
+      snapCanvas.width = w;
+      snapCanvas.height = h;
+      const ctx = snapCanvas.getContext('2d');
+      ctx.drawImage(liveVideo, 0, 0, w, h);
+      return new Promise((resolve) => snapCanvas.toBlob(resolve, 'image/jpeg', 0.88));
+    }
+
+    async function runWlaslCaptureBurst() {
+      if (!liveStream || !liveVideo.videoWidth || wlaslCapturing) return;
+      wlaslCapturing = true;
+      wlaslCaptureAbort = false;
+      try {
+        for (let i = 0; i < WLASL_SEQ_LEN; i++) {
+          if (!liveStream || wlaslCaptureAbort) break;
+          while (liveRequestBusy && !wlaslCaptureAbort) await sleep(10);
+          if (!liveStream || wlaslCaptureAbort) break;
+          liveRequestBusy = true;
+          try {
+            const blob = await grabLiveJpegBlob();
+            if (!blob) continue;
+            const data = await predictBlob(blob, 'live', {
+              decoderCommit: false,
+              wlaslAppend: true,
+              wlaslReset: i === 0,
+            });
+            if (!liveStream) break;
+            applyPrediction(data);
+            if (data.wlasl_capture_done) {
+              showStatus('WLASL: prediction ready.', false);
+              break;
+            }
+          } catch (err) {
+            showStatus('WLASL capture error: ' + formatLiveFetchError(err), true);
+            break;
+          } finally {
+            liveRequestBusy = false;
+          }
+          if (i < WLASL_SEQ_LEN - 1) await sleep(WLASL_CAPTURE_FRAME_MS);
+        }
+      } finally {
+        wlaslCapturing = false;
+        wlaslCaptureAbort = false;
+      }
+    }
+
     async function tickLive() {
       if (!liveStream || !liveVideo.videoWidth || liveRequestBusy) return;
+      if (backendEl.value === 'wlasl' && wlaslCapturing) return;
       liveRequestBusy = true;
       try {
-        const w = liveVideo.videoWidth;
-        const h = liveVideo.videoHeight;
-        snapCanvas.width = w;
-        snapCanvas.height = h;
-        const ctx = snapCanvas.getContext('2d');
-        ctx.drawImage(liveVideo, 0, 0, w, h);
-        const blob = await new Promise((resolve) => snapCanvas.toBlob(resolve, 'image/jpeg', 0.88));
+        const blob = await grabLiveJpegBlob();
         if (!blob) return;
-        const data = await predictBlob(blob, 'live');
+        const data = await predictBlob(blob, 'live', { decoderCommit: false });
         // If camera was stopped while this request was in-flight, ignore stale response.
         if (!liveStream || !liveTimer) return;
         applyPrediction(data);
       } catch (err) {
         showStatus('Live error: ' + formatLiveFetchError(err), true);
+      } finally {
+        liveRequestBusy = false;
+      }
+    }
+
+    /**
+     * Letter backends: append ONE frame classification to Part 3 buffer (keyboard Space).
+     * Does not replace the periodic live tick (preview only until Space).
+     */
+    async function commitLiveDecoderFrame() {
+      const backend = backendEl.value;
+      if (!(backend === 'mediapipe' || backend === 'image' || backend === 'yolo')) {
+        showStatus('Space-to-commit applies to letter backends only (MediaPipe / image / YOLO).', false);
+        return;
+      }
+      if (!liveStream || !liveVideo.videoWidth || liveRequestBusy) return;
+      liveRequestBusy = true;
+      try {
+        const blob = await grabLiveJpegBlob();
+        if (!blob) return;
+        const data = await predictBlob(blob, 'live', { decoderCommit: true });
+        if (!liveStream) return;
+        applyPrediction(data);
+        const lbl = data.label ? String(data.label).toUpperCase() : '(no letter)';
+        showStatus('Committed to decoder: ' + lbl, false);
+      } catch (err) {
+        showStatus('Commit error: ' + formatLiveFetchError(err), true);
       } finally {
         liveRequestBusy = false;
       }
@@ -910,6 +1016,7 @@
     }
 
     async function stopLiveCamera() {
+      wlaslCaptureAbort = true;
       if (liveTimer) {
         clearInterval(liveTimer);
         liveTimer = null;
@@ -919,10 +1026,6 @@
         liveStream = null;
       }
       liveVideo.srcObject = null;
-      // Clear UI state immediately on camera stop.
-      committedWordBuffer = '';
-      pendingLetterBuffer = '';
-      confirmedHypothesis = '';
       hideResult();
       refreshHudOverlay();
       try {
@@ -963,32 +1066,15 @@
       if (e.code === 'Space') {
         e.preventDefault();
         pulseShortcutIcon(spaceKeyIcon);
-        if (liveLetterValue) {
-          pendingLetterBuffer += liveLetterValue;
-          confirmedHypothesis = '';
-          showStatus('Letter entered: ' + liveLetterValue.toUpperCase(), false);
+        if (!liveStream) return;
+        if (backendEl.value === 'wlasl') {
+          if (!wlaslCapturing) void runWlaslCaptureBurst();
+          return;
+        }
+        if (backendEl.value === 'mediapipe' || backendEl.value === 'image' || backendEl.value === 'yolo') {
+          void commitLiveDecoderFrame();
         }
         return;
-      }
-
-      if (e.code === 'Enter') {
-        e.preventDefault();
-        pulseShortcutIcon(enterKeyIcon);
-        const topHyp = getTopBeamHypothesis();
-        if (topHyp) {
-          // Enter commits a single recommended word (replace previous display).
-          committedWordBuffer = topHyp;
-          pendingLetterBuffer = '';
-          confirmedHypothesis = topHyp;
-          refreshHudOverlay();
-          showStatus('Word recommendation entered: ' + topHyp, false);
-        } else {
-          committedWordBuffer = '';
-          pendingLetterBuffer = '';
-          confirmedHypothesis = '';
-          refreshHudOverlay();
-          showStatus('Word cleared.', false);
-        }
       }
 
       if (e.code === 'Escape') {
@@ -1057,8 +1143,8 @@
 
     setSourceMode('live');
     setFabRunning(false);
-    syncDecoderToggleUI();
     syncBackendUI();
+    refreshLiveShortcutsHint();
 
     (function checkServerReachable() {
       const banner = document.getElementById('serverBanner');

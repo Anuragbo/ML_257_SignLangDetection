@@ -469,8 +469,8 @@ def _get_wlasl_state(client_id: str):
 
     state = _wlasl_buffers.get(client_id)
     if state is None:
-        module = load_wlasl_module()
-        state = {"buffer": deque(maxlen=module.SEQ_LEN), "updated_at": now}
+        # ``capture`` holds frames for one Space-triggered clip (exactly SEQ_LEN then infer + clear).
+        state = {"capture": [], "updated_at": now}
         _wlasl_buffers[client_id] = state
     state["updated_at"] = now
     return state
@@ -544,6 +544,38 @@ def append_live_letter_frame(client_id: str, label: str | None, confidence: floa
         return {"error": str(e)}
 
     return _pipeline_result_to_decoder_dict(pr, frames_count=len(buf))
+
+
+def _empty_live_decoder_payload() -> dict[str, Any]:
+    """Decoder JSON shape when the live letter buffer has no committed frames yet."""
+    return {
+        "smoothed_letters": "",
+        "cleaned_letters_no_spaces": "",
+        "sentence": "",
+        "word_fragments": [],
+        "beam_top": [],
+        "frames_buffered": 0,
+    }
+
+
+def peek_live_letter_decoder(client_id: str) -> dict[str, Any]:
+    """
+    Re-run Part 3 on the current committed live buffer **without** appending a new frame.
+
+    Used when the camera loop classifies continuously but letters are only buffered on demand
+    (e.g. spacebar commits).
+    """
+    _prune_stale_letter_decoder_buffers()
+    buf = _letter_decoder_buffers.get(client_id)
+    if not buf:
+        return _empty_live_decoder_payload()
+
+    try:
+        dec = get_fingerspell_decoder()
+        pr = dec.decode_frames(list(buf))
+        return _pipeline_result_to_decoder_dict(pr, frames_count=len(buf))
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def _pipeline_result_to_decoder_dict(pr: Any, frames_count: int | None = None) -> dict[str, Any]:
@@ -700,7 +732,37 @@ def predict_video_from_bytes(
                 pass
 
 
-def predict_wlasl_live(image_bytes: bytes, model_name: str, client_id: str, *, mirror: bool = False) -> dict:
+def _holistic_landmarks_to_overlay(result: Any) -> dict[str, Any]:
+    """Normalized [x, y] for browser canvas (same convention as letter hand overlay)."""
+
+    def xy_list(landmarks: Any) -> list[list[float]] | None:
+        if not landmarks:
+            return None
+        return [[float(lm.x), float(lm.y)] for lm in landmarks]
+
+    key_pose = [11, 12, 13, 14, 15, 16, 23, 24]
+    pose_pts: list[list[float]] = []
+    if result.pose_landmarks:
+        for i in key_pose:
+            if i < len(result.pose_landmarks):
+                lm = result.pose_landmarks[i]
+                pose_pts.append([float(lm.x), float(lm.y)])
+    return {
+        "left_hand": xy_list(result.left_hand_landmarks),
+        "right_hand": xy_list(result.right_hand_landmarks),
+        "pose": pose_pts or None,
+    }
+
+
+def predict_wlasl_live(
+    image_bytes: bytes,
+    model_name: str,
+    client_id: str,
+    *,
+    mirror: bool = False,
+    append_frame: bool = False,
+    reset_capture: bool = False,
+) -> dict:
     bgr = _load_image(image_bytes)
     if bgr is None:
         return {"ok": False, "error": "Could not read the image. Use JPG, PNG, or WebP."}
@@ -714,10 +776,15 @@ def predict_wlasl_live(image_bytes: bytes, model_name: str, client_id: str, *, m
 
     features, result = module.extract_frame_features(bgr, detector)
     has_signal = bool(result.left_hand_landmarks or result.right_hand_landmarks)
-    state["buffer"].append(features)
-    n = len(state["buffer"])
+    holistic = _holistic_landmarks_to_overlay(result)
 
-    if n < module.SEQ_LEN:
+    if reset_capture:
+        state["capture"].clear()
+
+    seq_len = int(module.SEQ_LEN)
+    n_before = len(state["capture"])
+
+    def _preview_response(*, msg: str | None = None) -> dict[str, Any]:
         return {
             "ok": True,
             "backend": "wlasl",
@@ -727,11 +794,43 @@ def predict_wlasl_live(image_bytes: bytes, model_name: str, client_id: str, *, m
             "confidence": None,
             "top_predictions": [],
             "model": model_name,
-            "message": f"Collecting frames for WLASL word model: {n}/{module.SEQ_LEN}.",
-            "progress": {"current": n, "required": module.SEQ_LEN},
+            "message": msg,
+            "progress": {"current": n_before, "required": seq_len},
+            "holistic": holistic,
+            "wlasl_capture_done": False,
         }
 
-    preds = module.infer(model, list(state["buffer"]), label_map, _wlasl_device, top_k=3)
+    if not append_frame:
+        return _preview_response(
+            msg=(
+                "Press Space to record 30 frames (~1 s), then prediction runs. "
+                f"Buffer: {n_before}/{seq_len} (not growing until Space capture)."
+                if n_before == 0
+                else f"Capture in progress or ready: {n_before}/{seq_len} frames buffered."
+            )
+        )
+
+    state["capture"].append(np.asarray(features, dtype=np.float32))
+    n = len(state["capture"])
+
+    if n < seq_len:
+        return {
+            "ok": True,
+            "backend": "wlasl",
+            "task": "word",
+            "hand_detected": has_signal,
+            "label": None,
+            "confidence": None,
+            "top_predictions": [],
+            "model": model_name,
+            "message": f"Recording WLASL clip: {n}/{seq_len} frames…",
+            "progress": {"current": n, "required": seq_len},
+            "holistic": holistic,
+            "wlasl_capture_done": False,
+        }
+
+    preds = module.infer(model, list(state["capture"]), label_map, _wlasl_device, top_k=3)
+    state["capture"].clear()
     top_predictions = [{"label": word, "confidence": float(conf)} for word, conf in preds]
     label = top_predictions[0]["label"] if top_predictions else None
     conf = top_predictions[0]["confidence"] if top_predictions else None
@@ -745,7 +844,9 @@ def predict_wlasl_live(image_bytes: bytes, model_name: str, client_id: str, *, m
         "top_predictions": top_predictions,
         "model": model_name,
         "message": None if top_predictions else "No word prediction available.",
-        "progress": {"current": module.SEQ_LEN, "required": module.SEQ_LEN},
+        "progress": {"current": seq_len, "required": seq_len},
+        "holistic": holistic,
+        "wlasl_capture_done": True,
     }
 
 
@@ -802,6 +903,7 @@ def api_predict():
     client_id = request.form.get("client_id", "").strip() or request.remote_addr or "anonymous"
     stream_mode = request.form.get("stream_mode", "image").lower().strip()
     mirror = _parse_bool(request.form.get("mirror"), default=False)
+    decoder_commit = _parse_bool(request.form.get("decoder_commit"), default=False)
 
     data = f.read()
     if not data:
@@ -837,7 +939,16 @@ def api_predict():
                     "message": "The WLASL word model needs a live sequence of frames. Use Start camera instead of single-image upload.",
                 }
             else:
-                result = predict_wlasl_live(data, model_name, client_id, mirror=mirror)
+                wlasl_append = _parse_bool(request.form.get("wlasl_append"), default=False)
+                wlasl_reset = _parse_bool(request.form.get("wlasl_reset_capture"), default=False)
+                result = predict_wlasl_live(
+                    data,
+                    model_name,
+                    client_id,
+                    mirror=mirror,
+                    append_frame=wlasl_append,
+                    reset_capture=wlasl_reset,
+                )
         else:
             return jsonify({"ok": False, "error": "backend must be mediapipe, image, yolo, or wlasl."}), 400
     except FileNotFoundError as e:
@@ -848,9 +959,12 @@ def api_predict():
         and backend in ("mediapipe", "image", "yolo")
         and result.get("ok")
     ):
-        result["decoder"] = append_live_letter_frame(
-            client_id, result.get("label"), result.get("confidence")
-        )
+        if decoder_commit:
+            result["decoder"] = append_live_letter_frame(
+                client_id, result.get("label"), result.get("confidence")
+            )
+        else:
+            result["decoder"] = peek_live_letter_decoder(client_id)
 
     return jsonify(result), 200 if result.get("ok") else 400
 
