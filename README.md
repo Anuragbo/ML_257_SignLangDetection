@@ -1,380 +1,213 @@
-# Sign language detection (ML 257) — Part 1
+# How to Run the ASL Web Application
 
-ASL **letter** classification from static images: MediaPipe hand landmarks, then SVM / Random Forest / MLP; optional **CNN** and torchvision **MobileNetV2**, **ResNet-18**, and **VGG-11-BN** on 64×64 RGB crops; optional **YOLO** classification. A **webcam demo** uses the trained sklearn models on your machine.
+This guide is only for **running the demo in your browser**. You do not need to train models if weight files are already on your machine (from a teammate or a previous training run).
 
----
-
-## Local Python vs Docker (read this first)
-
-You do **not** have to install Python, a venv, and `pip install -r requirements.txt` if you do not want to.
-
-| | **Docker** | **Local Python** |
-|---|------------|------------------|
-| **You install** | Docker Desktop (and Git) | Python 3.10+, Git, then `pip install -r requirements.txt` |
-| **Preprocess → train → evaluate** | Yes — everything runs in the container | Yes — `run_pipeline.py` or manual commands |
-| **Webcam `demo.py`** | Not practical without extra camera/display setup | Run on the host (recommended) |
-| **Jupyter notebooks** | Possible but awkward | Natural on the host |
-
-Docker is **not** “optional” in the sense of being unnecessary. It is **optional** in the sense that it is **one of two valid ways** to run the batch pipeline: either the container brings the dependencies, or your own Python environment does.
-
-If your goal is “run the full pipeline without touching Python on my PC,” use **Docker** and mount your Kaggle credentials so `run_pipeline.py` can download data inside the container (see the Docker section). If you want to hack code, use notebooks, or use the webcam demo easily, use **local Python** (or use Docker for training and Python only for the demo).
+**What you get:** a local website at `http://127.0.0.1:5000` with live webcam, image/video upload, letter classification, WLASL word recognition, and a fingerspelling decoder (letters → words).
 
 ---
 
-## What everyone needs
+## Before you start
 
-- **This repository** on your machine (`git clone` or download).
-- **ASL images** under `part1_letter_classifier/data/asl_dataset/` — either **placed manually** or **downloaded automatically** (see below).
+| Requirement | Notes |
+|---------------|--------|
+| **Python 3.10 or newer** | [python.org](https://www.python.org/downloads/) — check with `python --version` |
+| **Git** (optional) | To clone the repo |
+| **Web browser** | Chrome, Edge, or Firefox recommended |
+| **Webcam** | Needed for live camera mode (not needed for upload-only) |
+| **Model files** | See [Step 2](#step-2-check-model-files) — not included in git |
 
----
-
-## 1. Dataset (automatic download or manual)
-
-### Automatic (recommended for `run_pipeline.py`)
-
-The pipeline can download the Kaggle dataset **[ayuraj/asl-dataset](https://www.kaggle.com/datasets/ayuraj/asl-dataset)** (same source as the project notebooks) if images are missing.
-
-1. Create a Kaggle API token: **[kaggle.com → Settings → API → Create New Token](https://www.kaggle.com/settings)**.
-2. Save `kaggle.json` to:
-
-   - **Windows:** `%USERPROFILE%\.kaggle\kaggle.json`
-   - **macOS / Linux:** `~/.kaggle/kaggle.json`
-
-3. Open the [dataset page](https://www.kaggle.com/datasets/ayuraj/asl-dataset) once and click **Download** or **Accept** if Kaggle asks you to agree to the dataset terms.
-
-When you run `python run_pipeline.py`, it will:
-
-- Check for class folders under `part1_letter_classifier/data/asl_dataset/`
-- If they are missing, print progress while the **Kaggle CLI** downloads and unzips, then place files in that folder
-
-Use **`python run_pipeline.py --no-download`** if you do not want any network download (the run will fail until you add data yourself).
-
-You can also run only the downloader:
-
-```bash
-python dataset_download.py
-```
-
-### Manual
-
-Put your own ASL images here:
-
-```text
-part1_letter_classifier/data/asl_dataset/
-```
-
-**Layout:** one subfolder per class, named with a **single** character (`0`–`9` or `a`–`z`). Inside each folder: `.jpg`, `.jpeg`, or `.png` images.
-
-```text
-part1_letter_classifier/data/asl_dataset/
-  a/
-  b/
-  ...
-  z/
-```
-
-The pipeline needs **at least one** such class folder before preprocessing can run.
+Clone or download the project, then open a terminal in the **repository root** (the folder that contains `requirements.txt` and `part1_letter_classifier/`).
 
 ---
 
-## 2. Run the full pipeline with Docker (no local Python required)
+## Step 1: Install Python packages
 
-Install **Docker Desktop** and start it. From the **repo root**:
-
-**Build the image once:**
-
-```bash
-docker build -t ml257-signlang:latest .
-```
-
-If you **updated the Dockerfile** (or still see old errors like missing `libGLESv2.so.2`), rebuild without cache so Docker does not reuse an older layer:
-
-```bash
-docker build --no-cache -t ml257-signlang:latest .
-```
-
-The Dockerfile uses the full **`python:3.11-bookworm`** image plus Mesa/GLES packages and runs a quick MediaPipe import during the build so problems show up immediately.
-
-**Run preprocessing, training, and evaluation in one shot** (same as `run_pipeline.py` on the host).
-
-Mount your Kaggle API folder so automatic dataset download works (omit the `-v` line if you already copied `asl_dataset` into `part1_letter_classifier/data/`):
-
-```bash
-docker compose --profile pipeline run --rm -v "${HOME}/.kaggle:/root/.kaggle:ro" signlang python /app/run_pipeline.py
-```
-
-On **Windows PowerShell** (path to your user profile):
+### Windows (PowerShell)
 
 ```powershell
-docker compose --profile pipeline run --rm -v "${env:USERPROFILE}\.kaggle:/root/.kaggle:ro" signlang python /app/run_pipeline.py
-```
+cd path\to\ML_257_SignLangDetection
 
-Or run each step yourself:
-
-```bash
-docker compose --profile pipeline run --rm signlang python /app/part1_letter_classifier/src/preprocessing.py
-docker compose --profile pipeline run --rm signlang python /app/part1_letter_classifier/src/train.py --mode all
-docker compose --profile pipeline run --rm signlang python /app/part1_letter_classifier/src/evaluate.py
-```
-
-`docker-compose.yml` mounts `part1_letter_classifier/data`, `models`, and `results` into the container, so outputs stay on your computer under those folders. The **`signlang`** service uses **`--profile pipeline`** so a plain `docker compose up` does not start it by default.
-
-The **`signlang-ui`** service runs the **Web UI** (Flask: upload + live camera in the browser) on port **5000** — see **Web UI (Docker)** below (`docker compose up signlang-ui`).
-
-Training can take a long time (especially CNN and torchvision transfer models). The image uses **CPU** PyTorch to avoid huge CUDA downloads. MobileNet / ResNet / VGG use ImageNet-pretrained weights on first run (downloaded once by torchvision).
-
----
-
-## 3. Run the full pipeline with local Python
-
-Use this path if you prefer not to use Docker, or for day-to-day development.
-
-### 3.1 Virtual environment (recommended)
-
-**Windows (PowerShell)**
-
-```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
 
-**Windows (Command Prompt)**
-
-```bat
-python -m venv .venv
-.venv\Scripts\activate.bat
-```
-
-**macOS / Linux**
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 3.2 Install dependencies
-
-```bash
 pip install -r requirements.txt
+pip install ultralytics
 ```
 
-### 3.3 One command for preprocess → train → evaluate
-
-**Windows:** double-click **`run_all.bat`**, or:
-
-```bat
-python run_pipeline.py
-```
-
-**macOS / Linux:**
-
-```bash
-python3 run_pipeline.py
-```
-
-### Skip steps (if you already have outputs)
-
-```bash
-python run_pipeline.py --skip-preprocessing
-python run_pipeline.py --skip-training
-```
-
----
-
-## 4. Where outputs go
-
-| Output | Location |
-|--------|----------|
-| Preprocessed arrays (`X.npy`, `y.npy`, `label_map.npy`, test splits) | `part1_letter_classifier/data/` |
-| Saved models (`.pkl`, `cnn_best.pt`, `mobilenet_best.pt`, `resnet18_best.pt`, `vgg11_bn_best.pt`, YOLO weights) | `part1_letter_classifier/models/` |
-| Plots (confusion matrices, comparison chart) | `part1_letter_classifier/results/` |
-| MediaPipe model (downloaded once) | `part1_letter_classifier/src/hand_landmarker.task` |
-
----
-
-## 5. Run steps manually (local Python only)
-
-From the **repo root**, with venv activated and `PYTHONPATH` set.
-
-**PowerShell**
+If `Activate.ps1` is blocked, run once:
 
 ```powershell
-$env:PYTHONPATH = "part1_letter_classifier/src"
-python part1_letter_classifier/src/preprocessing.py
-python part1_letter_classifier/src/train.py --mode all
-python part1_letter_classifier/src/evaluate.py
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-**Command Prompt**
-
-```bat
-set PYTHONPATH=part1_letter_classifier\src
-python part1_letter_classifier\src\preprocessing.py
-python part1_letter_classifier\src\train.py --mode all
-python part1_letter_classifier\src\evaluate.py
-```
-
-**macOS / Linux**
+### macOS / Linux
 
 ```bash
-export PYTHONPATH=part1_letter_classifier/src
-python part1_letter_classifier/src/preprocessing.py
-python part1_letter_classifier/src/train.py --mode all
-python part1_letter_classifier/src/evaluate.py
+cd path/to/ML_257_SignLangDetection
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt
+pip install ultralytics
 ```
 
-**Part 1 `train.py` modes:** `--mode landmarks` (SVM, RF, MLP only), `--mode cnn`, `--mode mobilenet`, `--mode resnet` (ResNet-18), `--mode vgg` (VGG-11-BN), **`--mode transfer`** (trains MobileNet + ResNet + VGG in one run—skips CNN and landmarks), `--mode all` (landmarks plus every image model). Use **`--epochs N`** to cap training length (default 50). Transfer models use an ImageNet backbone by default; add `--no-imagenet-weights` to train those backbones from scratch.
+> `ultralytics` is only required if you use the **YOLO** backend. Installing it up front avoids errors later.
 
 ---
 
-## 6. Webcam demo (local Python — after training)
+## Step 2: Check model files
 
-Uses your camera and the **SVM / RF / MLP** models in `part1_letter_classifier/models/`.
+The app loads trained weights from disk. **If these files are missing, prediction will fail** until you train models or copy them from someone who already ran training.
 
-**Windows**
+### Minimum to try letter recognition (MediaPipe)
 
-```bat
-cd part1_letter_classifier\src
-python demo.py
-```
+| File | Location |
+|------|----------|
+| `label_map.npy` | `part1_letter_classifier/data/label_map.npy` |
+| At least one of `svm.pkl`, `rf.pkl`, `mlp.pkl` | `part1_letter_classifier/models/` |
 
-**macOS / Linux**
+### All backends
 
-```bash
-cd part1_letter_classifier/src
-python3 demo.py
-```
+| Backend in the UI | Pick in “Model” | Required files |
+|-------------------|-----------------|----------------|
+| **MediaPipe** | SVM, RF, or MLP | `part1_letter_classifier/data/label_map.npy` + `models/svm.pkl` (or `rf.pkl` / `mlp.pkl`) |
+| **PyTorch image** | CNN, MobileNet, ResNet, or VGG | `label_map.npy` + one of `models/cnn_best.pt`, `mobilenet_best.pt`, `resnet18_best.pt`, `vgg11_bn_best.pt` |
+| **YOLO** | (none) | `part1_letter_classifier/models/yolo_cls_best.pt` |
+| **WLASL** | BiLSTM or Transformer | `part2_word_recognizer/models/bilstm_best.pt` or `transformer_best.pt` |
+| | | `part2_word_recognizer/data/sequences/label_map.npy` |
 
-**Controls:** `q` quit; `1` SVM, `2` Random Forest, `3` MLP.
+**Don’t have weights?** Ask your project partner for the `models/` folders, or train them using [About.md](About.md) (`python run_pipeline.py` for Part 1).
 
-### Using Docker
-
-- **Windows / macOS (Docker Desktop):** Passing the **webcam** and a **GUI window** (`cv2.imshow`) into a Linux container is **not practical** for most setups. Use **`docker compose up signlang-ui`** and use **Live camera** or upload stills in the browser, or run **`demo.py` with local Python** (venv) as above.
-- **Linux (same machine display):** You can try the **`signlang-demo`** service (needs `/dev/video0`, `DISPLAY`, and the X11 socket so the window can open):
-
-```bash
-docker compose --profile demo run --rm -it \
-  --device /dev/video0 \
-  -e DISPLAY=$DISPLAY \
-  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-  signlang-demo
-```
-
-Optional: `python /app/part1_letter_classifier/src/demo.py --model svm` by overriding `command` in a one-off run, or run `bash` first and invoke `demo.py` manually.
+On first run, MediaPipe may download small task files (`hand_landmarker.task`, `holistic_landmarker.task`) automatically.
 
 ---
 
-## 7. Web UI — upload or live camera (letter prediction)
+## Step 3: Start the server
 
-Small Flask app under **`part1_letter_classifier/ui/`** — upload a still photo or use **Live camera** (browser `getUserMedia`) so frames are sent to the server as JPEGs; the trained **SVM / RF / MLP** models predict the letter (same pipeline as `demo.py`, but the camera runs in the browser, not in the container).
-
-**Live camera + Docker:** The webcam is used by your **browser** on the host; only image bytes are posted to the Flask app. That works with **`docker compose up signlang-ui`** on Windows without passing `/dev/video0` into the container. Use **http://127.0.0.1** or **http://localhost** so the page is treated as a secure context for camera access.
-
-**Layout**
-
-```text
-part1_letter_classifier/ui/
-  app.py
-  templates/index.html
-  static/style.css
-```
-
-**Run** (from the **repository root**, after `pip install -r requirements.txt` and training so `models/*.pkl` and `data/label_map.npy` exist):
+With the virtual environment **activated**, from the **repository root**:
 
 ```bash
 python part1_letter_classifier/ui/app.py
 ```
 
-Open **http://127.0.0.1:5000** in your browser. Optional: `set PORT=8080` (Windows) or `export PORT=8080` to change the port.
+You should see something like:
 
-### Run the Web UI in Docker
+```text
+ASL UI: http://127.0.0.1:5000/
+```
 
-Uses the same **`ml257-signlang`** image as the training pipeline. Mounts **`data/`** (for `label_map.npy`) and **`models/`** (for `.pkl` files) from your repo.
+Leave this terminal window open while you use the app.
 
-**Build** (if you have not already):
+### Optional settings
+
+| Variable | Example | Effect |
+|----------|---------|--------|
+| `PORT` | `8080` | Use a different port |
+| `HOST` | `0.0.0.0` | Allow access from other devices on your network |
+
+**Windows (PowerShell):**
+
+```powershell
+$env:PORT=8080
+python part1_letter_classifier/ui/app.py
+```
+
+**macOS / Linux:**
+
+```bash
+export PORT=8080
+python part1_letter_classifier/ui/app.py
+```
+
+---
+
+## Step 4: Open the app in your browser
+
+1. Go to **http://127.0.0.1:5000** (or `http://127.0.0.1:8080` if you changed `PORT`).
+2. Use **127.0.0.1** or **localhost** — some browsers block the webcam on other addresses.
+3. Allow **camera access** when prompted (for live mode).
+
+Quick health check: **http://127.0.0.1:5000/api/health** should return `{"status":"ok"}`.
+
+---
+
+## Step 5: Use the interface
+
+### Choose backend and model
+
+- **Backend** — MediaPipe, PyTorch image, YOLO, or WLASL.
+- **Model** — depends on backend (e.g. SVM vs MLP, or BiLSTM vs Transformer).
+
+### Live camera
+
+1. Click **Start camera**.
+2. Sign in front of the camera.
+
+| Backend | What happens | Keyboard |
+|---------|----------------|----------|
+| **MediaPipe / PyTorch image / YOLO** | Live letter guess updates on screen | Press **Space** once per letter to add it to the **Part 3 decoder** (builds words below) |
+| **WLASL** | Holistic skeleton overlay on video | Press **Space** once to record **30 frames** (~1 second), then the app predicts a **word** |
+
+### Upload a file
+
+- **Image** — single-frame prediction for the selected backend.
+- **Video** (letter backends only) — decodes the video and runs the Part 3 decoder over frames.
+
+### Part 3 decoder panel
+
+Shows smoothed letters and decoded words when you use letter backends (live **Space** commits or video upload).
+
+---
+
+## Alternative: Run with Docker
+
+Use this if you prefer not to install Python locally. You still need model files in the project folders on your computer.
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+2. From the repository root:
 
 ```bash
 docker build -t ml257-signlang:latest .
-```
-
-**Start the UI** (foreground; stop with Ctrl+C):
-
-```bash
 docker compose up signlang-ui
 ```
 
-Detached (runs in the background):
+3. Open **http://127.0.0.1:5000** in your browser.
 
-```bash
-docker compose up -d signlang-ui
-```
+The webcam runs in the browser on your PC; Docker only runs the Flask server. Stop the app with **Ctrl+C** in the terminal.
 
-Then open **http://127.0.0.1:5000** on the machine running Docker (use **http://localhost:5000** if you prefer).
-
-**Run on another host port** (e.g. 8080):
-
-```bash
-UI_PORT=8080 docker compose up signlang-ui
-```
-
-**Windows PowerShell:**
+**Different port (Windows PowerShell):**
 
 ```powershell
-$env:UI_PORT=8080; docker compose up signlang-ui
-```
-
-The app listens on **`0.0.0.0`** inside the container so port mapping works; locally you still use `127.0.0.1` in the browser.
-
----
-
-## 8. Extract text from a PDF
-
-Default: `documents/project_proposal.pdf`. Requires local Python (or run a one-off container with the same image if you prefer).
-
-```bash
-python read_pdf.py
-python read_pdf.py "path\to\your\file.pdf"
+$env:UI_PORT=8080
+docker compose up signlang-ui
 ```
 
 ---
 
-## 9. Jupyter notebooks
+## Troubleshooting
 
-Open `part1_letter_classifier/notebooks/` in Jupyter on the host. The first cell assumes the notebook’s working directory is the `notebooks` folder.
-
----
-
-## 10. Part 3 — fingerspelling decoder (letters → words → sentences)
-
-`part3_decoder/` is a **separate** rule-based post-processor: feed it per-frame letter predictions (from any CNN/YOLO/sklearn pipeline) and it returns smoothed letters, decoded words, and an optional sentence with beam alternatives. It does **not** depend on the Part 1 training code.
-
-```bash
-python -m part3_decoder.demo_decode
-python -m part3_decoder.demo_decode --word HELXO
-```
-
-Details, scoring, and tuning: **`part3_decoder/README.md`**.
-
-The **web UI** (`python part1_letter_classifier/ui/app.py`) runs this decoder when you use **Start camera** or **upload a video** (letter backends only: MediaPipe, PyTorch image, or YOLO). The JSON field `decoder` is shown on the page under “Part 3 decoder.”
+| Symptom | Fix |
+|---------|-----|
+| `python` not found | Install Python 3.10+ and use `python3` on Mac/Linux |
+| `No module named ...` | Activate the venv and run `pip install -r requirements.txt` again |
+| Error about missing `.pkl` or `.pt` | Add model files (Step 2) or switch to a backend you have weights for |
+| Camera never starts | Use `http://127.0.0.1:5000`, allow camera in browser settings, close Zoom/Teams/other camera apps |
+| YOLO backend fails | Run `pip install ultralytics` and ensure `yolo_cls_best.pt` exists |
+| WLASL backend fails | Ensure Part 2 `.pt` files and `part2_word_recognizer/data/sequences/label_map.npy` exist |
+| First prediction is slow | Normal — models load on the first request |
+| Page won’t load | Confirm the server terminal still shows no crash; check firewall isn’t blocking the port |
 
 ---
 
-## Quick checklists
+## Stop the application
 
-**Docker only**
+- **Local Python:** press **Ctrl+C** in the terminal where `app.py` is running.
+- **Docker:** **Ctrl+C**, or `docker compose down` from the repo root.
 
-1. Install Docker Desktop.  
-2. Add **`~/.kaggle/kaggle.json`** (or pre-fill **`part1_letter_classifier/data/asl_dataset/`** yourself).  
-3. `docker build -t ml257-signlang:latest .`  
-4. Run `run_pipeline.py` with the **`-v …/.kaggle:/root/.kaggle:ro`** mount shown in section 2 (or skip the mount if data is already on disk).  
-5. Check **`part1_letter_classifier/results/`**.
+---
 
-**Local Python**
+## More documentation
 
-1. Create venv, activate it.  
-2. `pip install -r requirements.txt`  
-3. Add **`kaggle.json`** if you want automatic download (section 1), or add images under **`part1_letter_classifier/data/asl_dataset/`** manually.  
-4. `python run_pipeline.py`  
-5. Check **`part1_letter_classifier/results/`**.
-
-If something fails, read the terminal message: missing dataset folders and missing packages are the most common issues. Training uses **CPU** in Docker by default; local `pip install torch` may install a GPU build depending on your platform, but the code runs on CPU if no GPU is available.
+- **Train models, datasets, full pipeline:** [About.md](About.md)
+- **Part 3 decoder details:** [part3_decoder/README.md](part3_decoder/README.md)
